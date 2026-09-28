@@ -13,6 +13,8 @@ export const ALLOWED_RECOVERY_ACTIONS = [
 export type AllowedRecoveryActionType = (typeof ALLOWED_RECOVERY_ACTIONS)[number];
 
 export interface AIDiagnosisResult {
+  id?: string;
+  model?: string;
   diagnosis: string;
   rootCause: string;
   confidence: number;
@@ -22,6 +24,7 @@ export interface AIDiagnosisResult {
   reasoning: string;
   requiredInformation?: string[];
   rawResponse?: string;
+  createdAt?: string;
 }
 
 export interface AIRecoveryStrategy {

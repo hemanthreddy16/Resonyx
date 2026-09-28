@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search,
@@ -10,10 +10,27 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { MOCK_INCIDENTS } from "@/data/mockIncidents";
+import { Incident } from "@/types";
 import { SeverityBadge } from "@/components/ui/Badge";
 
 export function IncidentsView() {
   const router = useRouter();
+
+  // Live incidents list from PostgreSQL with fallback
+  const [incidentsList, setIncidentsList] = useState<Incident[]>(MOCK_INCIDENTS);
+  const [isLiveDb, setIsLiveDb] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/incidents")
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          setIncidentsList(json.data);
+          setIsLiveDb(true);
+        }
+      })
+      .catch((err) => console.error("Failed to load incidents from API:", err));
+  }, []);
 
   // Filters state
   const [search, setSearch] = useState("");
@@ -24,10 +41,10 @@ export function IncidentsView() {
   const [selectedPattern, setSelectedPattern] = useState("all");
 
   // Distinct services
-  const allServices = Array.from(new Set(MOCK_INCIDENTS.map((i) => i.service)));
+  const allServices = Array.from(new Set(incidentsList.map((i) => i.service)));
 
   // Filter evaluation
-  const filteredIncidents = MOCK_INCIDENTS.filter((inc) => {
+  const filteredIncidents = incidentsList.filter((inc) => {
     // Search
     const matchesSearch =
       search === "" ||
@@ -102,8 +119,14 @@ export function IncidentsView() {
               Incident Management & Failure Repository
             </h1>
             <span className="rounded-md bg-sky-950 px-2 py-0.5 text-xs font-mono text-sky-400 border border-sky-800/60 font-semibold">
-              {filteredIncidents.length} of {MOCK_INCIDENTS.length} Incidents
+              {filteredIncidents.length} of {incidentsList.length} Incidents
             </span>
+            {isLiveDb && (
+              <span className="font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 text-[10px] flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live PostgreSQL
+              </span>
+            )}
           </div>
           <p className="mt-1 text-xs sm:text-sm text-slate-400">
             Real-time incident triage, root cause attribution, pattern detection, and vector-mapped postmortems.

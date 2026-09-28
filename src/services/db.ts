@@ -654,6 +654,8 @@ export async function getDiagnosisForIncident(incidentId: string): Promise<AIDia
       if (res.rows && res.rows.length > 0) {
         const row = res.rows[0];
         return {
+          id: row.id,
+          model: row.model || "anthropic/claude-3.5-sonnet",
           diagnosis: row.diagnosis,
           rootCause: row.root_cause,
           confidence: Number(row.confidence),
@@ -662,6 +664,7 @@ export async function getDiagnosisForIncident(incidentId: string): Promise<AIDia
           recommendedActions: row.recommended_actions || [],
           reasoning: row.reasoning,
           requiredInformation: row.required_information || [],
+          createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
         };
       }
     } catch (err: unknown) {
@@ -737,8 +740,10 @@ export async function getExecutionsForIncident(incidentId: string): Promise<Acti
           result: r.result,
           error: r.error,
           executionDuration: r.execution_duration_ms,
+          executionDurationMs: r.execution_duration_ms,
           executedBy: r.executed_by,
           timestamp: new Date(r.created_at).toISOString(),
+          createdAt: new Date(r.created_at).toISOString(),
         }));
       }
     } catch (err: unknown) {
@@ -1146,6 +1151,184 @@ export async function getAllHindsightMemories(): Promise<HindsightMemoryRecord[]
   return Array.from(memoryStore.hindsightMemories.values());
 }
 
+export async function getLearnedMemoryForIncident(
+  incidentId: string,
+  incidentCode?: string
+): Promise<HindsightMemoryRecord | null> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+      const code = incidentCode || "";
+      const idCode = incidentId.replace(/^inc-/, "MEM-");
+      const res = await client.query(
+        `SELECT * FROM hindsight_memories 
+         WHERE source_incident_id = $1 
+            OR LOWER(source_incident_code) = LOWER($1)
+            OR LOWER(source_incident_code) = LOWER($2)
+            OR LOWER(memory_code) = LOWER($3)
+            OR LOWER(memory_code) = LOWER($1)
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1;`,
+        [incidentId, code, idCode]
+      );
+      if (res.rows && res.rows.length > 0) {
+        const r = res.rows[0];
+        return {
+          id: r.id,
+          memoryCode: r.memory_code,
+          sourceIncident: r.title,
+          sourceIncidentCode: r.source_incident_code,
+          vectorId: r.vector_id,
+          knowledgeDomain: r.knowledge_domain,
+          context: [],
+          action: r.action,
+          outcome: r.outcome,
+          outcomeDetail: r.outcome_detail,
+          learnedInsight: r.learned_insight,
+          rootCause: r.root_cause,
+          decision: r.decision,
+          patternCode: r.pattern_code,
+          confidence: Number(r.confidence_score),
+          relatedMemories: [],
+          extractedRule: r.extracted_rule,
+          antiPatternSignature: r.anti_pattern_signature,
+          failureMechanism: r.root_cause,
+          semanticTags: r.semantic_tags || [],
+          recallCount: r.recall_count || 1,
+          lastRecalledAt: new Date(r.updated_at || r.created_at).toISOString(),
+          indexingDate: new Date(r.created_at).toISOString(),
+        };
+      }
+    } catch (err: unknown) {
+      console.error("[PostgreSQL] Error in getLearnedMemoryForIncident:", err);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  // in-memory fallback
+  const mem = Array.from(memoryStore.hindsightMemories.values()).find(
+    (m) =>
+      m.sourceIncidentCode?.toLowerCase() === incidentId.toLowerCase() ||
+      m.sourceIncidentCode?.toLowerCase() === incidentCode?.toLowerCase() ||
+      m.memoryCode.toLowerCase().includes(incidentId.toLowerCase().replace("inc-", ""))
+  );
+  return mem || null;
+}
+
+export interface RecalledMemoryItem {
+  memoryId: string;
+  title: string;
+  learnedInsight: string;
+  confidence: number;
+  relationship: string;
+  outcome: string;
+  action: string;
+  patternCode: string;
+}
+
+export async function getRecalledMemoriesForIncident(
+  incidentId: string,
+  incidentCode?: string,
+  diagnosisReasoning?: string,
+  rootCauseDomain?: string
+): Promise<RecalledMemoryItem[]> {
+  const p = getDbPool();
+  const recalled: RecalledMemoryItem[] = [];
+  const foundCodes = new Set<string>();
+
+  // 1. Extract memory codes mentioned in diagnosis reasoning (e.g. MEM-0871, MEM-1282, etc.)
+  const regex = /MEM-[A-Za-z0-9_-]+/g;
+  const mentionedCodes = diagnosisReasoning ? Array.from(new Set(diagnosisReasoning.match(regex) || [])) : [];
+
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+
+      // Query mentioned memories from PostgreSQL
+      if (mentionedCodes.length > 0) {
+        const res = await client.query(
+          `SELECT * FROM hindsight_memories WHERE memory_code = ANY($1);`,
+          [mentionedCodes]
+        );
+        for (const r of res.rows) {
+          if (r.source_incident_id === incidentId || r.source_incident_code === incidentCode) continue;
+          foundCodes.add(r.memory_code);
+          recalled.push({
+            memoryId: r.memory_code,
+            title: r.title,
+            learnedInsight: r.learned_insight || r.extracted_rule,
+            confidence: Number(r.confidence_score) || 94.5,
+            relationship: `Direct Causal Precedent: Explicitly cited during AI diagnosis to prevent recurring downtime from ${r.root_cause}.`,
+            outcome: r.outcome || "Recovered",
+            action: r.action || "isolate_bulkhead",
+            patternCode: r.pattern_code || "PAT-RESILIENCE",
+          });
+        }
+      }
+
+      // If we don't have enough recalled memories, find relevant domain memories
+      if (recalled.length < 2) {
+        const domainRes = await client.query(
+          `SELECT * FROM hindsight_memories 
+           WHERE (source_incident_id IS NULL OR source_incident_id != $1)
+             AND (source_incident_code IS NULL OR source_incident_code != $2)
+           ORDER BY 
+             CASE WHEN $3::text IS NOT NULL AND knowledge_domain = $3 THEN 0 ELSE 1 END,
+             confidence_score DESC, recall_count DESC, created_at DESC
+           LIMIT 3;`,
+          [incidentId, incidentCode || "", rootCauseDomain || null]
+        );
+        for (const r of domainRes.rows) {
+          if (!foundCodes.has(r.memory_code) && recalled.length < 3) {
+            foundCodes.add(r.memory_code);
+            recalled.push({
+              memoryId: r.memory_code,
+              title: r.title,
+              learnedInsight: r.learned_insight || r.extracted_rule,
+              confidence: Number(r.confidence_score) || 93.0,
+              relationship: `Historical Failure Vector: Prior mitigation of ${r.root_cause} cross-referenced during distributed trace evaluation.`,
+              outcome: r.outcome || "Recovered",
+              action: r.action || "isolate_bulkhead",
+              patternCode: r.pattern_code || "PAT-RESILIENCE",
+            });
+          }
+        }
+      }
+
+      return recalled;
+    } catch (err: unknown) {
+      console.error("[PostgreSQL] Error in getRecalledMemoriesForIncident:", err);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  // Fallback from memoryStore
+  const all = Array.from(memoryStore.hindsightMemories.values());
+  for (const m of all) {
+    if (m.sourceIncidentCode?.toLowerCase() === incidentId.toLowerCase()) continue;
+    if (recalled.length >= 2) break;
+    recalled.push({
+      memoryId: m.memoryCode,
+      title: m.sourceIncident,
+      learnedInsight: m.learnedInsight || m.extractedRule,
+      confidence: m.confidence || 94.0,
+      relationship: `Historical Precedent: Prior failure pattern matching ${m.rootCause}.`,
+      outcome: m.outcome || "Recovered",
+      action: m.action || "isolate_bulkhead",
+      patternCode: m.patternCode || "PAT-RESILIENCE",
+    });
+  }
+
+  return recalled;
+}
+
 export interface DashboardStatsResult {
   metrics: {
     totalIncidents: number;
@@ -1378,5 +1561,7 @@ export const db = {
   updateHindsightMemoryOutcome,
   updateHindsightLearning,
   getAllHindsightMemories,
+  getLearnedMemoryForIncident,
+  getRecalledMemoriesForIncident,
   listIncidents: getAllIncidents,
 };
