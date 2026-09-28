@@ -43,6 +43,9 @@ export function IncidentsView() {
   // Distinct services
   const allServices = Array.from(new Set(incidentsList.map((i) => i.service)));
 
+  // Newest incident, used by the "Open Latest" shortcut.
+  const latestIncident = incidentsList[0] ?? null;
+
   // Filter evaluation
   const filteredIncidents = incidentsList.filter((inc) => {
     // Search
@@ -114,33 +117,31 @@ export function IncidentsView() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-              Incident Management & Failure Repository
+          <div>
+            <h1 className="text-[30px] font-bold tracking-tight text-white">
+              Incidents
             </h1>
-            <span className="rounded-md bg-sky-950 px-2 py-0.5 text-xs font-mono text-sky-400 border border-sky-800/60 font-semibold">
-              {filteredIncidents.length} of {incidentsList.length} Incidents
-            </span>
-            {isLiveDb && (
-              <span className="font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 text-[10px] flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live PostgreSQL
-              </span>
-            )}
           </div>
-          <p className="mt-1 text-xs sm:text-sm text-slate-400">
-            Real-time incident triage, root cause attribution, pattern detection, and vector-mapped postmortems.
+          <p className="mt-1 text-sm text-slate-400">
+            Incident triage, root cause attribution, and postmortems drawn from the database.
+          </p>
+          <p className="mt-1 text-sm text-slate-500">
+            {isLiveDb
+              ? `Showing ${incidentsList.length} incidents from PostgreSQL.`
+              : `Showing ${incidentsList.length} seeded sample incidents; the database is not reachable.`}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/incidents/inc-1047")}
-            className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-sky-500 transition-colors"
-          >
-            <Sparkles className="h-4 w-4" />
-            <span>Open Latest: INC-1047</span>
-          </button>
+          {latestIncident && (
+            <button
+              onClick={() => router.push(`/incidents/${latestIncident.id}`)}
+              className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-sky-500 transition-colors"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>Open Latest: {latestIncident.code || latestIncident.id}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -155,14 +156,14 @@ export function IncidentsView() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by code (e.g. INC-1047), title, service, root cause, or pattern..."
-              className="w-full rounded-lg border border-slate-800 bg-slate-950/80 pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+              className="w-full rounded-lg border border-slate-800 bg-slate-950/80 pl-9 pr-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-sky-500 focus:outline-none"
             />
           </div>
 
           {hasActiveFilters && (
             <button
               onClick={resetFilters}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white transition-colors self-end sm:self-auto"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors self-end sm:self-auto"
             >
               <RefreshCw className="h-3 w-3" />
               <span>Reset Filters</span>
@@ -171,10 +172,10 @@ export function IncidentsView() {
         </div>
 
         {/* Filter Dropdowns Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1 text-sm">
           {/* 1. Severity Filter */}
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+            <label className="text-sm font-bold uppercase tracking-wider text-slate-400 block mb-1">
               Severity
             </label>
             <select
@@ -192,7 +193,7 @@ export function IncidentsView() {
 
           {/* 2. Status Filter */}
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+            <label className="text-sm font-bold uppercase tracking-wider text-slate-400 block mb-1">
               Status
             </label>
             <select
@@ -210,7 +211,7 @@ export function IncidentsView() {
 
           {/* 3. Service Filter */}
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+            <label className="text-sm font-bold uppercase tracking-wider text-slate-400 block mb-1">
               Service
             </label>
             <select
@@ -229,7 +230,7 @@ export function IncidentsView() {
 
           {/* 4. Date Filter */}
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+            <label className="text-sm font-bold uppercase tracking-wider text-slate-400 block mb-1">
               Detection Window
             </label>
             <select
@@ -245,7 +246,7 @@ export function IncidentsView() {
 
           {/* 5. Pattern Detected Filter */}
           <div className="col-span-2 sm:col-span-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+            <label className="text-sm font-bold uppercase tracking-wider text-slate-400 block mb-1">
               Pattern Match
             </label>
             <select
@@ -267,8 +268,8 @@ export function IncidentsView() {
       {/* Professional Incident Table */}
       <div className="overflow-hidden rounded-xl border border-slate-800/90 bg-slate-900/60 backdrop-blur-sm shadow-xl">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b border-slate-800 bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-slate-800 bg-slate-950/80 text-sm font-bold uppercase tracking-wider text-slate-400">
               <tr>
                 <th className="py-3.5 px-4">Incident</th>
                 <th className="py-3.5 px-4">Service</th>
@@ -291,7 +292,7 @@ export function IncidentsView() {
                     {/* Incident: Code + Title */}
                     <td className="py-4 px-4 max-w-xs sm:max-w-sm">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-sky-400 group-hover:text-sky-300">
+                        <span className="font-mono text-sm font-bold text-sky-400 group-hover:text-sky-300">
                           {inc.code}
                         </span>
                         <span className="text-slate-600">•</span>
@@ -299,14 +300,14 @@ export function IncidentsView() {
                           {inc.title}
                         </span>
                       </div>
-                      <p className="mt-1 text-[11px] text-slate-400 line-clamp-1">
+                      <p className="mt-1 text-sm text-slate-400 line-clamp-1">
                         {inc.summary}
                       </p>
                     </td>
 
                     {/* Service */}
                     <td className="py-4 px-4 whitespace-nowrap">
-                      <span className="font-mono text-[11px] text-slate-300 bg-slate-950 px-2 py-1 rounded border border-slate-800">
+                      <span className="font-mono text-sm text-slate-300 bg-slate-950 px-2 py-1 rounded border border-slate-800">
                         {inc.service}
                       </span>
                     </td>
@@ -319,7 +320,7 @@ export function IncidentsView() {
                     {/* Status */}
                     <td className="py-4 px-4 whitespace-nowrap">
                       <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
+                        className={`rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider border ${
                           inc.status === "investigating"
                             ? "bg-red-500/20 text-red-300 border-red-500/30 animate-pulse"
                             : inc.status === "mitigated"
@@ -337,22 +338,22 @@ export function IncidentsView() {
                     <td className="py-4 px-4 whitespace-nowrap">
                       {inc.patternMatch ? (
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-[11px] text-sky-300 bg-sky-950 px-2 py-0.5 rounded border border-sky-800/60">
+                          <span className="font-mono text-sm text-sky-300 bg-sky-950 px-2 py-0.5 rounded border border-sky-800/60">
                             {inc.patternMatch.patternCode}
                           </span>
-                          <span className="text-[10px] font-semibold text-emerald-400 font-mono">
+                          <span className="text-sm font-semibold text-emerald-400 font-mono">
                             {inc.patternMatch.confidence}%
                           </span>
                         </div>
                       ) : (
-                        <span className="text-slate-500 text-[11px]">No signature</span>
+                        <span className="text-slate-500 text-sm">No signature</span>
                       )}
                     </td>
 
                     {/* Risk */}
                     <td className="py-4 px-4 whitespace-nowrap">
                       <span
-                        className={`font-semibold uppercase text-[11px] ${
+                        className={`font-semibold uppercase text-sm ${
                           inc.riskLevel === "critical"
                             ? "text-red-400"
                             : inc.riskLevel === "high"
@@ -366,7 +367,7 @@ export function IncidentsView() {
 
                     {/* Detected */}
                     <td className="py-4 px-4 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5 text-slate-300 font-mono text-[11px]">
+                      <div className="flex items-center gap-1.5 text-slate-300 font-mono text-sm">
                         <Clock className="h-3 w-3 text-slate-500" />
                         <span>{inc.detectedTime}</span>
                       </div>
@@ -379,7 +380,7 @@ export function IncidentsView() {
                           e.stopPropagation();
                           router.push(`/incidents/${inc.id}`);
                         }}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-slate-200 group-hover:border-sky-500 group-hover:bg-sky-600 group-hover:text-white transition-all shadow-sm"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm font-semibold text-slate-200 group-hover:border-sky-500 group-hover:bg-sky-600 group-hover:text-white transition-all shadow-sm"
                       >
                         <span>Details</span>
                         <ChevronRight className="h-3.5 w-3.5" />
@@ -389,7 +390,7 @@ export function IncidentsView() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan={8} className="py-12 text-center text-slate-400 text-sm">
                     No incidents match the selected filter criteria.
                   </td>
                 </tr>

@@ -480,11 +480,11 @@ export function HindsightDifferenceView() {
 
           <div className="flex flex-wrap items-center gap-3">
             <Link
-              href="/ai-command"
+              href="/demo"
               className="rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-xs font-bold text-white transition-colors flex items-center gap-1.5"
             >
               <Brain className="h-3.5 w-3.5 text-sky-400" />
-              Test In AI Command Center
+              Test In Interactive Demo
             </Link>
 
             <Link

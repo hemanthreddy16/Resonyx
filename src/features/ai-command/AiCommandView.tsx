@@ -651,10 +651,10 @@ export function AiCommandView() {
 
               <div className="pt-2">
                 <Link
-                  href="/hindsight"
+                  href="/memory"
                   className="w-full rounded-lg bg-slate-800 hover:bg-slate-700 py-2.5 text-xs font-bold text-slate-200 text-center flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  Explore Vector in Hindsight Explorer <ChevronRight className="h-3.5 w-3.5" />
+                  Explore Vector in Hindsight Memory <ChevronRight className="h-3.5 w-3.5" />
                 </Link>
               </div>
             </div>

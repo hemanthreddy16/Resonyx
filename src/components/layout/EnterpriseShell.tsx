@@ -31,25 +31,19 @@ export function EnterpriseShell({ children }: EnterpriseShellProps) {
         />
 
         {/* Dynamic Page Viewport */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-5 lg:p-6 max-w-7xl w-full mx-auto">
           {children}
         </main>
 
-        {/* Enterprise Platform Footer */}
-        <footer className="border-t border-slate-800/80 bg-[#070b16]/90 px-6 py-4 text-xs text-slate-400">
+        {/* Footer */}
+        <footer className="border-t border-slate-800/80 bg-[#070b16]/90 px-6 py-4 text-sm text-slate-400">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-300">RESONYX</span>
               <span className="text-slate-500">•</span>
               <span>Every Failure Becomes Intelligence.</span>
             </div>
-            <div className="flex items-center gap-4 text-slate-400">
-              <span className="font-mono text-[11px] text-sky-400">Hindsight Engine v3.4</span>
-              <span>•</span>
-              <span>Enterprise SLA 99.99%</span>
-              <span>•</span>
-              <span>SOC2 Type II Certified</span>
-            </div>
+            <span>Demo data is simulated.</span>
           </div>
         </footer>
       </div>

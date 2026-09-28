@@ -4,22 +4,18 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ShieldAlert,
   ShieldCheck,
   Zap,
   AlertOctagon,
   ArrowRight,
   Database,
   Cpu,
-  Layers,
   Sparkles,
   Activity,
   CheckCircle2,
   Clock,
   ChevronRight,
-  RotateCw,
   Radio,
-  Terminal,
   Brain,
 } from "lucide-react";
 import {
@@ -76,101 +72,6 @@ export interface DashboardStats {
   isLiveDatabase: boolean;
 }
 
-// 8 Stages of the Organizational Learning Loop
-interface LoopStep {
-  id: string;
-  name: string;
-  code: string;
-  shortDesc: string;
-  telemetry: string;
-  mechanism: string;
-  aiOutput: string;
-  icon: React.ComponentType<{ className?: string }>;
-}
-
-const LEARNING_LOOP_STEPS: LoopStep[] = [
-  {
-    id: "incident",
-    name: "Incident",
-    code: "01. TELEMETRY TRIGGER",
-    shortDesc: "Outage or anomaly detected in production.",
-    telemetry: "p99 latency > 6.4s on payment-gateway-proxy. 3 Availability Zones reporting socket saturation.",
-    mechanism: "Real-time Datadog APM alert triggers Resonyx Hindsight Sentinel webhook within 800ms.",
-    aiOutput: "Incident payload synthesized: Severity P1, Impact $185K, 54,000 active checkout sessions affected.",
-    icon: AlertOctagon,
-  },
-  {
-    id: "investigation",
-    name: "AI Investigation",
-    code: "02. ROOT CAUSE ATTRIBUTION",
-    shortDesc: "Automated distributed trace & error budget scan.",
-    telemetry: "Trace depth: 14 downstream microservices evaluated. Deadlock localized in async threadpool.",
-    mechanism: "Resonyx-RCA-v4 traverses RPC DAG graph, isolating upstream thread depletion to unhedged downstream client.",
-    aiOutput: "Attributed Root Cause: Cascading Timeout with monotonic thread starvation (Confidence: 98.7%).",
-    icon: Cpu,
-  },
-  {
-    id: "hindsight",
-    name: "Hindsight Memory",
-    code: "03. VECTOR RETRIEVAL",
-    shortDesc: "Recalls identical historical failure vectors.",
-    telemetry: "1536-dimensional semantic query matched against PostgreSQL failure vectors in 14.8ms.",
-    mechanism: "HNSW cosine distance calculation identifies high similarity cluster vec_0x789f2a4.",
-    aiOutput: "Found exact historical matches. Failure signatures are 98% identical.",
-    icon: Database,
-  },
-  {
-    id: "pattern",
-    name: "Pattern Discovery",
-    code: "04. SIGNATURE CLASSIFICATION",
-    shortDesc: "Crystallizes recurring failure signatures.",
-    telemetry: "Correlated across historical occurrences. Recurrence frequency: 1.8 incidents/month.",
-    mechanism: "Pattern Engine matches PAT-CASCADING-QUEUE-01: Synchronous Downstream Bottleneck with Thread Saturation.",
-    aiOutput: "Anti-pattern classified. Blast radius: Global Multi-Region. Trend: Declining (-40% since guardrail).",
-    icon: Layers,
-  },
-  {
-    id: "risk",
-    name: "Risk Detection",
-    code: "05. PRE-DEPLOY RADAR",
-    shortDesc: "Intercepts future similar changes before deploy.",
-    telemetry: "Scanned 1,420 Pull Requests, 84 Terraform plans, and 18 Helm release manifests this week.",
-    mechanism: "AST code analysis detects unbounded sync gRPC client in PR #4892 matching the failure signature.",
-    aiOutput: "Pre-Deploy Alert: 92% failure probability detected in checkout pull request.",
-    icon: ShieldAlert,
-  },
-  {
-    id: "prevention",
-    name: "Preventive Action",
-    code: "06. GUARDRAIL ENFORCEMENT",
-    shortDesc: "Automated CI/CD policy gates & runtime breakers.",
-    telemetry: "Guardrail #PRV-104 invoked across microservice repositories in GitHub Actions.",
-    mechanism: "Enforces 650ms deadline propagation, isolated bulkhead threadpools, and full jitter backoff.",
-    aiOutput: "Policy Enforced: CI/CD blocked merging until client was refactored with hedged circuit breaker.",
-    icon: ShieldCheck,
-  },
-  {
-    id: "outcome",
-    name: "Outcome",
-    code: "07. IMMUNITY ATTAINMENT",
-    shortDesc: "Zero-downtime averted failure & validated resilience.",
-    telemetry: "Next downstream third-party stall absorbed gracefully with 0ms client timeout propagation.",
-    mechanism: "Bulkheaded threads rejected saturated calls; canary cluster maintained 99.99% availability.",
-    aiOutput: "Failure averted. Estimated downtime loss avoided. MTTR reduced to sub-minute range.",
-    icon: CheckCircle2,
-  },
-  {
-    id: "learning",
-    name: "Learning",
-    code: "08. CODIFIED RESILIENCE",
-    shortDesc: "Permanently codified into organizational memory.",
-    telemetry: "Resilience Score elevated. Knowledge indexed into PostgreSQL Hindsight Memory store.",
-    mechanism: "Continuous feedback loop feeds the updated vector memory, strengthening pre-deploy radar.",
-    aiOutput: "Continuous Learning Complete. The organization has codified defense against this failure mode.",
-    icon: RotateCw,
-  },
-];
-
 // Dynamically generate smooth sparkline points ending at the real metric count
 function generateSparkline(value: number, spread = 0.25) {
   if (!value || value <= 0) {
@@ -196,18 +97,30 @@ function formatConfidence(c: number): string {
 
 export function OverviewView() {
   const router = useRouter();
-  const [activeStepIndex, setActiveStepIndex] = useState(0);
-  const [autoPlayLoop, setAutoPlayLoop] = useState(true);
 
   // Live state from PostgreSQL API
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isHindsightLive, setIsHindsightLive] = useState(false);
+
+  // Check real health status of Hindsight
+  const checkHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health", { cache: "no-store" });
+      if (!res.ok) throw new Error("Health check failed");
+      const json = await res.json();
+      const live =
+        json?.services?.hindsight?.status === "CONNECTED" ||
+        (json?.services?.hindsight?.configured === true && json?.status === "ok");
+      setIsHindsightLive(Boolean(live));
+    } catch {
+      setIsHindsightLive(false);
+    }
+  }, []);
 
   // Fetch real statistics from /api/dashboard/stats
-  const fetchStats = useCallback(async (isBackground = false) => {
-    if (!isBackground) setIsRefreshing(true);
+  const fetchStats = useCallback(async () => {
     try {
       const res = await fetch("/api/dashboard/stats", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -221,28 +134,31 @@ export function OverviewView() {
       console.error("[OverviewView] Failed to fetch live dashboard stats:", msg);
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }, []);
 
   // Polling every 5 seconds + Demo completion event listener + Tab focus
   useEffect(() => {
-    fetchStats(false);
+    fetchStats();
+    checkHealth();
 
     // 1. Polling interval every 5 seconds
     const interval = setInterval(() => {
-      fetchStats(true);
+      fetchStats();
+      checkHealth();
     }, 5000);
 
-    // 2. Custom event listener dispatched by the 60-second autonomous demo
+    // 2. Custom event listener dispatched by autonomous demo
     const handleDemoCompleted = () => {
-      fetchStats(false);
+      fetchStats();
+      checkHealth();
     };
     window.addEventListener("resonyx:demo_completed", handleDemoCompleted);
 
     // 3. Tab focus listener
     const handleFocus = () => {
-      fetchStats(true);
+      fetchStats();
+      checkHealth();
     };
     window.addEventListener("focus", handleFocus);
 
@@ -251,18 +167,7 @@ export function OverviewView() {
       window.removeEventListener("resonyx:demo_completed", handleDemoCompleted);
       window.removeEventListener("focus", handleFocus);
     };
-  }, [fetchStats]);
-
-  // Auto-cycle through the learning loop steps every 4.5 seconds unless paused
-  useEffect(() => {
-    if (!autoPlayLoop) return;
-    const interval = setInterval(() => {
-      setActiveStepIndex((prev) => (prev + 1) % LEARNING_LOOP_STEPS.length);
-    }, 4500);
-    return () => clearInterval(interval);
-  }, [autoPlayLoop]);
-
-  const activeStep = LEARNING_LOOP_STEPS[activeStepIndex];
+  }, [fetchStats, checkHealth]);
 
   const metrics = stats?.metrics || {
     totalIncidents: 0,
@@ -286,9 +191,9 @@ export function OverviewView() {
   const recentLearnings = stats?.recentLearnings || [];
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-5 pb-8">
       {/* Top Command Center Header */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-800/90 bg-gradient-to-r from-[#070e1c] via-[#091224] to-[#0c1830] p-6 sm:p-8 shadow-2xl">
+      <div className="relative overflow-hidden rounded-2xl border border-slate-800/90 bg-gradient-to-r from-[#070e1c] via-[#091224] to-[#0c1830] p-5 sm:p-6 shadow-2xl">
         {/* Subtle grid pattern overlay */}
         <div
           className="absolute inset-0 opacity-[0.035] pointer-events-none"
@@ -298,70 +203,66 @@ export function OverviewView() {
           }}
         />
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-3xl">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-1.5 max-w-3xl">
             {/* Header / Subtitle / Status */}
             <div className="flex flex-wrap items-center gap-3">
               <span className="font-mono text-xs uppercase tracking-widest text-sky-400 font-bold">
-                Organizational Failure Intelligence
+                ORGANIZATIONAL FAILURE INTELLIGENCE
               </span>
               <span className="text-slate-600">•</span>
-              {/* Pulsing HINDSIGHT ACTIVE indicator with live DB status */}
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950/70 px-3 py-1 text-xs font-bold text-emerald-300 shadow-sm shadow-emerald-950/50">
+              {/* Status badge: HINDSIGHT LIVE (green) or OFFLINE (amber) based on health check */}
+              <div
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-0.5 text-xs font-bold shadow-sm ${
+                  isHindsightLive
+                    ? "border-emerald-500/40 bg-emerald-950/70 text-emerald-300 shadow-emerald-950/50"
+                    : "border-amber-500/40 bg-amber-950/70 text-amber-300 shadow-amber-950/50"
+                }`}
+              >
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                  <span
+                    className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      isHindsightLive ? "animate-ping bg-emerald-400" : "bg-amber-400"
+                    }`}
+                  />
+                  <span
+                    className={`relative inline-flex h-2 w-2 rounded-full ${
+                      isHindsightLive ? "bg-emerald-400" : "bg-amber-400"
+                    }`}
+                  />
                 </span>
-                <span>
-                  {stats?.isLiveDatabase ? "● POSTGRESQL & HINDSIGHT LIVE" : "● HINDSIGHT ACTIVE"}
-                </span>
-                <span className="rounded bg-emerald-900/60 px-1.5 py-0.2 text-[10px] font-mono text-emerald-200">
-                  v3.4
-                </span>
+                <span>{isHindsightLive ? "HINDSIGHT LIVE" : "OFFLINE"}</span>
               </div>
             </div>
 
-            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white">
+            <h1 className="text-[30px] sm:text-[36px] font-extrabold tracking-tight text-white leading-tight">
               Resonyx Command Center
             </h1>
 
-            <h3 className="text-base sm:text-lg font-medium text-sky-200/90 tracking-wide">
+            <h2 className="text-[17px] sm:text-[18px] font-medium text-sky-200/90 tracking-wide">
               Your organization is learning from every failure.
-            </h3>
+            </h2>
 
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed pt-1">
-              Real-time operational command console converting incident telemetry into permanent architectural resilience.
+            <p className="text-[14px] sm:text-[15px] text-slate-300 leading-normal pt-0.5">
+              An AI agent that remembers past incidents, learns which fixes work, and warns you before the same failure happens again.
             </p>
           </div>
 
-          {/* Quick Actions */}
+          {/* Quick Actions: Primary & Secondary buttons side by side */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
-            <button
-              onClick={() => fetchStats(false)}
-              disabled={isRefreshing}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-850 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50"
-              title="Refresh live metrics from PostgreSQL"
-            >
-              <RotateCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin text-sky-400" : ""}`} />
-              <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
-            </button>
             <Link
               href="/incidents"
-              className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-sky-950/50 hover:bg-sky-500 transition-colors"
+              className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-950/50 hover:bg-sky-500 transition-colors"
             >
               <AlertOctagon className="h-4 w-4" />
-              <span>
-                {metrics.activeIncidents > 0
-                  ? `Inspect ${metrics.activeIncidents} Active Outages`
-                  : `Inspect ${metrics.totalIncidents} Incidents`}
-              </span>
+              <span>{`Inspect ${metrics.activeIncidents} Active Incidents`}</span>
             </Link>
             <Link
-              href="/ai-command"
-              className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+              href="/memory"
+              className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
             >
-              <Terminal className="h-4 w-4 text-sky-400" />
-              <span>AI Command Console</span>
+              <Database className="h-4 w-4 text-sky-400" />
+              <span>Hindsight Memory</span>
             </Link>
           </div>
         </div>
@@ -589,11 +490,6 @@ export function OverviewView() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-mono text-sky-300/80 bg-sky-950/60 px-3 py-1 rounded-full border border-sky-800/40">
-              Recall Precision: 99.4%
-            </span>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
@@ -665,159 +561,6 @@ export function OverviewView() {
             <p className="mt-1 text-[11px] text-slate-400">
               Mean AI diagnostic and verification certainty
             </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Large Interactive Section: Organizational Learning Loop */}
-      <div className="rounded-2xl border border-slate-800/90 bg-[#090f1d] p-6 sm:p-8 shadow-2xl space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-5">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="rounded bg-sky-950 px-2 py-0.5 font-mono text-[10px] font-bold text-sky-300 border border-sky-800/50">
-                CONTINUOUS FEEDBACK ARCHITECTURE
-              </span>
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-                Organizational Learning Loop
-              </h2>
-            </div>
-            <p className="mt-1 text-xs sm:text-sm text-slate-400">
-              Interactive 8-stage intelligence loop converting operational incidents into permanent organizational immunity. Click any node to inspect live engine telemetry.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setAutoPlayLoop(!autoPlayLoop)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                autoPlayLoop
-                  ? "border-sky-500/40 bg-sky-950/60 text-sky-300"
-                  : "border-slate-800 bg-slate-900 text-slate-400 hover:text-white"
-              }`}
-            >
-              <RotateCw className={`h-3.5 w-3.5 ${autoPlayLoop ? "animate-spin" : ""}`} />
-              <span>{autoPlayLoop ? "Auto-cycling Loop" : "Paused"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 8-Stage Interactive Navigation Track */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          {LEARNING_LOOP_STEPS.map((step, idx) => {
-            const Icon = step.icon;
-            const isActive = idx === activeStepIndex;
-
-            return (
-              <button
-                key={step.id}
-                onClick={() => {
-                  setAutoPlayLoop(false);
-                  setActiveStepIndex(idx);
-                }}
-                className={`group relative flex flex-col items-center justify-center rounded-xl border p-3 text-center transition-all duration-200 ${
-                  isActive
-                    ? "border-sky-400 bg-sky-950/60 shadow-lg shadow-sky-950/50 ring-1 ring-sky-400/50"
-                    : "border-slate-800/80 bg-slate-950/60 hover:border-slate-700 hover:bg-slate-900/60"
-                }`}
-              >
-                {/* Connecting arrow indicator between nodes */}
-                {idx < LEARNING_LOOP_STEPS.length - 1 && (
-                  <div className="hidden lg:block absolute -right-2 top-1/2 -translate-y-1/2 z-20 text-slate-600 font-mono text-[10px]">
-                    →
-                  </div>
-                )}
-                {idx === LEARNING_LOOP_STEPS.length - 1 && (
-                  <div className="hidden lg:block absolute -right-2 top-1/2 -translate-y-1/2 z-20 text-sky-400 font-mono text-[10px] animate-pulse">
-                    ↺
-                  </div>
-                )}
-
-                <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
-                    isActive
-                      ? "border-sky-400 bg-sky-500 text-white shadow-md shadow-sky-500/30"
-                      : "border-slate-800 bg-slate-900 text-slate-400 group-hover:text-slate-200"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                </div>
-
-                <span
-                  className={`mt-2 text-xs font-semibold truncate ${
-                    isActive ? "text-white" : "text-slate-300 group-hover:text-white"
-                  }`}
-                >
-                  {step.name}
-                </span>
-
-                <span className="font-mono text-[9px] text-slate-400 mt-0.5">
-                  Step 0{idx + 1}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Live Loop Stage Deep Inspector */}
-        <div className="rounded-xl border border-sky-500/25 bg-slate-950/80 p-5 shadow-inner space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg bg-sky-600/20 p-2 text-sky-400 border border-sky-500/30">
-                <activeStep.icon className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-sky-400">
-                    {activeStep.code}
-                  </span>
-                  <span className="rounded bg-slate-800 px-2 py-0.2 text-[10px] font-semibold uppercase text-slate-300">
-                    Live Engine State
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white mt-0.5">
-                  {activeStep.name}: {activeStep.shortDesc}
-                </h3>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs">
-              <span className="flex items-center gap-1.5 text-emerald-400 font-mono">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                Sub-20ms Telemetry Bus
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            {/* Real-time Telemetry */}
-            <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3.5 space-y-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Stage Telemetry Signature
-              </span>
-              <p className="font-mono text-slate-200 leading-relaxed">
-                {activeStep.telemetry}
-              </p>
-            </div>
-
-            {/* AI Mechanism */}
-            <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3.5 space-y-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Underlying Resonyx Mechanism
-              </span>
-              <p className="text-slate-300 leading-relaxed">
-                {activeStep.mechanism}
-              </p>
-            </div>
-
-            {/* AI Output / Action */}
-            <div className="rounded-lg border border-sky-500/20 bg-sky-950/20 p-3.5 space-y-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-300">
-                Intelligence Codification
-              </span>
-              <p className="text-sky-200 leading-relaxed font-medium">
-                {activeStep.aiOutput}
-              </p>
-            </div>
           </div>
         </div>
       </div>
@@ -968,10 +711,10 @@ export function OverviewView() {
             </h2>
           </div>
           <Link
-            href="/timeline"
+            href="/memory"
             className="text-xs font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1"
           >
-            <span>View Full Learning Timeline ({metrics.learnedMemories})</span>
+            <span>View All Memories ({metrics.learnedMemories})</span>
             <ChevronRight className="h-3.5 w-3.5" />
           </Link>
         </div>

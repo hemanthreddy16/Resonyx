@@ -197,9 +197,10 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
     }
   };
 
-  // Format confidence helper
+  // Format confidence helper. An absent value is reported as unknown rather than
+  // substituting a flattering default.
   const formatConfidence = (c?: number) => {
-    if (typeof c !== "number" || isNaN(c)) return "95.0%";
+    if (typeof c !== "number" || isNaN(c)) return "Not recorded";
     if (c <= 1) return `${(c * 100).toFixed(1)}%`;
     return `${c.toFixed(1)}%`;
   };
@@ -226,18 +227,18 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           <AlertOctagon className="h-8 w-8 text-red-400" />
         </div>
         <h2 className="text-xl font-bold text-white">Incident Not Found</h2>
-        <p className="text-xs text-slate-400 max-w-md mx-auto">{errorMessage}</p>
+        <p className="text-sm text-slate-400 max-w-md mx-auto">{errorMessage}</p>
         <div className="pt-2 flex justify-center gap-3">
           <button
             onClick={() => fetchIncidentDetails(false)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
           >
             <RotateCw className="h-3.5 w-3.5" />
             <span>Try Again</span>
           </button>
           <button
             onClick={() => router.push("/incidents")}
-            className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 transition-colors"
           >
             <span>Back to Incidents</span>
           </button>
@@ -270,7 +271,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-16">
       {/* Breadcrumb Navigation */}
-      <div className="flex items-center justify-between gap-4 text-xs text-slate-400">
+      <div className="flex items-center justify-between gap-4 text-sm text-slate-400">
         <div className="flex items-center gap-2">
           <Link href="/" className="hover:text-sky-400 transition-colors">
             Command Center
@@ -287,14 +288,14 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           <button
             onClick={() => fetchIncidentDetails(false)}
             disabled={isRefreshing}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-850 px-3 py-1.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-850 px-3 py-1.5 text-sm font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50"
           >
             <RotateCw className={`h-3 w-3 ${isRefreshing ? "animate-spin text-sky-400" : ""}`} />
             <span>{isRefreshing ? "Refreshing..." : "Sync PostgreSQL"}</span>
           </button>
           <button
             onClick={() => router.push("/incidents")}
-            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+            className="flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200 transition-colors"
           >
             <span>All Incidents</span>
           </button>
@@ -307,12 +308,12 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           {/* Top Meta Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
             <div className="flex flex-wrap items-center gap-2.5">
-              <span className="font-mono text-xs font-bold text-sky-400 bg-sky-950 px-2.5 py-1 rounded border border-sky-800/50">
+              <span className="font-mono text-sm font-bold text-sky-400 bg-sky-950 px-2.5 py-1 rounded border border-sky-800/50">
                 {incident.code || incident.id}
               </span>
               <SeverityBadge severity={incident.severity as "critical" | "high" | "medium" | "low" | "info"} />
               <span
-                className={`rounded px-2.5 py-1 text-xs font-bold uppercase tracking-wider border ${
+                className={`rounded px-2.5 py-1 text-sm font-bold uppercase tracking-wider border ${
                   incident.status === "resolved" || incident.status === "learning-indexed"
                     ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
                     : incident.status === "mitigated"
@@ -322,18 +323,18 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               >
                 Status: {incident.status}
               </span>
-              <span className="font-mono text-xs text-slate-300 bg-slate-900 px-2.5 py-1 rounded border border-slate-800">
+              <span className="font-mono text-sm text-slate-300 bg-slate-900 px-2.5 py-1 rounded border border-slate-800">
                 Service: <strong>{incident.service}</strong>
               </span>
               {data?.isLiveDatabase && (
-                <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
+                <span className="inline-flex items-center gap-1 font-mono text-sm text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   PostgreSQL Backed
                 </span>
               )}
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-slate-300 font-mono">
+            <div className="flex items-center gap-2 text-sm text-slate-300 font-mono">
               <Clock className="h-4 w-4 text-sky-400" />
               <span>
                 Detected:{" "}
@@ -358,7 +359,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           {/* Telemetry Stats Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
             <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+              <span className="text-sm font-bold uppercase tracking-wider text-slate-500 block">
                 Estimated Impact
               </span>
               <span className="text-sm font-bold text-amber-400 font-mono">
@@ -366,7 +367,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </span>
             </div>
             <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+              <span className="text-sm font-bold uppercase tracking-wider text-slate-500 block">
                 Affected Users
               </span>
               <span className="text-sm font-bold text-slate-200 font-mono">
@@ -374,7 +375,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </span>
             </div>
             <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+              <span className="text-sm font-bold uppercase tracking-wider text-slate-500 block">
                 Root Cause Domain
               </span>
               <span className="text-sm font-bold text-sky-300 truncate block">
@@ -382,7 +383,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </span>
             </div>
             <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+              <span className="text-sm font-bold uppercase tracking-wider text-slate-500 block">
                 Hindsight Vector
               </span>
               <span className="text-sm font-bold text-cyan-300 font-mono truncate block">
@@ -397,7 +398,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               <button
                 onClick={handleRunPipeline}
                 disabled={isRunningPipeline}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-sky-600 px-5 py-2.5 text-xs font-bold text-white shadow-xl shadow-emerald-950/50 hover:from-emerald-500 hover:to-sky-500 transition-all cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-sky-600 px-5 py-2.5 text-sm font-bold text-white shadow-xl shadow-emerald-950/50 hover:from-emerald-500 hover:to-sky-500 transition-all cursor-pointer disabled:opacity-50"
               >
                 <Sparkles className={`h-4 w-4 ${isRunningPipeline ? "animate-spin" : ""}`} />
                 <span>
@@ -406,7 +407,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </button>
             </div>
 
-            <div className="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-xl border border-slate-800 text-xs">
+            <div className="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-xl border border-slate-800 text-sm">
               <button
                 onClick={() => setActiveTab("all")}
                 className={`px-3 py-1.5 rounded-lg transition-colors font-semibold ${
@@ -451,14 +452,14 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           </div>
 
           {pipelineSuccessMessage && (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-xs text-emerald-300 font-mono flex items-center gap-2">
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-sm text-emerald-300 font-mono flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
               <span>{pipelineSuccessMessage}</span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="rounded-xl border border-red-500/30 bg-red-950/40 p-3 text-xs text-red-300 font-mono flex items-center gap-2">
+            <div className="rounded-xl border border-red-500/30 bg-red-950/40 p-3 text-sm text-red-300 font-mono flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 shrink-0 text-red-400" />
               <span>{errorMessage}</span>
             </div>
@@ -476,13 +477,13 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 <h2 className="text-base font-bold uppercase tracking-wider text-white">
                   Autonomous Operational Timeline
                 </h2>
-                <p className="text-xs text-slate-400">
+                <p className="text-sm text-slate-400">
                   End-to-end incident lifecycle: Detection → Investigation → AI Diagnosis → Recovery → Verification → Learning
                 </p>
               </div>
             </div>
 
-            <span className="font-mono text-xs text-emerald-400 bg-emerald-950/60 px-3 py-1 rounded-full border border-emerald-800/40">
+            <span className="font-mono text-sm text-emerald-400 bg-emerald-950/60 px-3 py-1 rounded-full border border-emerald-800/40">
               Stage 0{activeTimelineStage} of 07 Reached
             </span>
           </div>
@@ -497,15 +498,15 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">01. DETECT</span>
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
               </div>
-              <h4 className="text-xs font-bold text-white">Incident Detected</h4>
-              <p className="text-[11px] text-slate-300 leading-tight">
+              <h4 className="text-sm font-bold text-white">Incident Detected</h4>
+              <p className="text-sm text-slate-300 leading-tight">
                 Telemetry anomaly on {incident.service}.
               </p>
-              <span className="text-[10px] font-mono text-emerald-400 block pt-1">
+              <span className="text-sm font-mono text-emerald-400 block pt-1">
                 {incident.detectedTime || "Alert Active"}
               </span>
             </div>
@@ -518,15 +519,15 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">02. INVESTIGATE</span>
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
               </div>
-              <h4 className="text-xs font-bold text-white">Investigation</h4>
-              <p className="text-[11px] text-slate-300 leading-tight">
+              <h4 className="text-sm font-bold text-white">Investigation</h4>
+              <p className="text-sm text-slate-300 leading-tight">
                 Trace depth & queue contention evaluated.
               </p>
-              <span className="text-[10px] font-mono text-emerald-400 block pt-1">
+              <span className="text-sm font-mono text-emerald-400 block pt-1">
                 Sub-800ms scan
               </span>
             </div>
@@ -541,7 +542,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">03. AI DIAGNOSIS</span>
                 {diagnosis ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -549,11 +550,11 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                 )}
               </div>
-              <h4 className="text-xs font-bold text-white">AI Diagnosis</h4>
-              <p className="text-[11px] text-slate-300 leading-tight truncate">
+              <h4 className="text-sm font-bold text-white">AI Diagnosis</h4>
+              <p className="text-sm text-slate-300 leading-tight truncate">
                 {diagnosis?.rootCause || "Pending diagnosis"}
               </p>
-              <span className="text-[10px] font-mono text-sky-400 block pt-1">
+              <span className="text-sm font-mono text-sky-400 block pt-1">
                 {diagnosis ? `${formatConfidence(diagnosis.confidence)} Cert` : "Awaiting LLM"}
               </span>
             </div>
@@ -566,7 +567,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">04. STRATEGY</span>
                 {recoveryStrategy || execution ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -574,11 +575,11 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                 )}
               </div>
-              <h4 className="text-xs font-bold text-white">Recovery Strategy</h4>
-              <p className="text-[11px] text-slate-300 leading-tight font-mono truncate">
+              <h4 className="text-sm font-bold text-white">Recovery Strategy</h4>
+              <p className="text-sm text-slate-300 leading-tight font-mono truncate">
                 [{recoveryStrategy?.selectedAction || execution?.action || "Evaluating"}]
               </p>
-              <span className="text-[10px] font-mono text-amber-400 block pt-1">
+              <span className="text-sm font-mono text-amber-400 block pt-1">
                 Safety Vetted
               </span>
             </div>
@@ -593,7 +594,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">05. RECOVER</span>
                 {execution ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -601,11 +602,11 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                 )}
               </div>
-              <h4 className="text-xs font-bold text-white">Execution</h4>
-              <p className="text-[11px] text-slate-300 leading-tight">
+              <h4 className="text-sm font-bold text-white">Execution</h4>
+              <p className="text-sm text-slate-300 leading-tight">
                 {execution ? `Status: ${execution.status.toUpperCase()}` : "Awaiting trigger"}
               </p>
-              <span className="text-[10px] font-mono text-emerald-400 block pt-1">
+              <span className="text-sm font-mono text-emerald-400 block pt-1">
                 {execution ? `${execution.executionDurationMs}ms execution` : "Standby"}
               </span>
             </div>
@@ -618,7 +619,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">06. VERIFY</span>
                 {verification ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
@@ -626,11 +627,11 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                 )}
               </div>
-              <h4 className="text-xs font-bold text-white">Verification</h4>
-              <p className="text-[11px] text-slate-300 leading-tight">
+              <h4 className="text-sm font-bold text-white">Verification</h4>
+              <p className="text-sm text-slate-300 leading-tight">
                 {verification?.verificationStatus === "verified_resolved" ? "SLO Checks Passed" : "Pending probe"}
               </p>
-              <span className="text-[10px] font-mono text-cyan-400 block pt-1">
+              <span className="text-sm font-mono text-cyan-400 block pt-1">
                 {verification ? "Telemetry Validated" : "Standby"}
               </span>
             </div>
@@ -643,7 +644,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   : "border-slate-800 bg-slate-900/40 opacity-50"
               }`}
             >
-              <div className="flex items-center justify-between text-[10px] font-mono">
+              <div className="flex items-center justify-between text-sm font-mono">
                 <span className="text-slate-400">07. LEARN</span>
                 {learnedMemory ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-cyan-400" />
@@ -651,11 +652,11 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <Clock className="h-3.5 w-3.5 text-slate-500" />
                 )}
               </div>
-              <h4 className="text-xs font-bold text-white">Hindsight Learning</h4>
-              <p className="text-[11px] text-slate-300 leading-tight font-mono truncate">
+              <h4 className="text-sm font-bold text-white">Hindsight Learning</h4>
+              <p className="text-sm text-slate-300 leading-tight font-mono truncate">
                 {learnedMemory ? learnedMemory.memoryCode : "Postmortem codification"}
               </p>
-              <span className="text-[10px] font-mono text-cyan-300 block pt-1">
+              <span className="text-sm font-mono text-cyan-300 block pt-1">
                 {learnedMemory ? "Immunity Codified" : "Pending"}
               </span>
             </div>
@@ -674,12 +675,12 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <h2 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
                     <span>AI Root Cause Diagnosis & OpenRouter Inference</span>
                     {diagnosis && (
-                      <span className="rounded bg-sky-950 px-2 py-0.5 font-mono text-[10px] font-bold text-sky-300 border border-sky-800/50">
+                      <span className="rounded bg-sky-950 px-2 py-0.5 font-mono text-sm font-bold text-sky-300 border border-sky-800/50">
                         {diagnosis.model}
                       </span>
                     )}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-sm text-slate-400 mt-0.5">
                     Real inference results persisted in PostgreSQL table `diagnoses`.
                   </p>
                 </div>
@@ -687,7 +688,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
 
               {diagnosis && (
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-emerald-500/20 px-3 py-1 font-mono text-xs font-bold text-emerald-400 border border-emerald-500/30">
+                  <span className="rounded bg-emerald-500/20 px-3 py-1 font-mono text-sm font-bold text-emerald-400 border border-emerald-500/30">
                     Confidence: {formatConfidence(diagnosis.confidence)}
                   </span>
                 </div>
@@ -698,13 +699,13 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               <div className="space-y-4">
                 {/* Root Cause Box */}
                 <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-4 space-y-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
+                  <span className="text-sm font-bold uppercase tracking-wider text-sky-400">
                     Attributed Root Cause
                   </span>
                   <h3 className="text-base sm:text-lg font-bold text-white leading-snug">
                     {diagnosis.rootCause}
                   </h3>
-                  <p className="text-xs text-slate-200 leading-relaxed pt-1">
+                  <p className="text-sm text-slate-200 leading-relaxed pt-1">
                     {diagnosis.diagnosis}
                   </p>
                 </div>
@@ -712,14 +713,14 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Contributing Factors */}
                   <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 space-y-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    <span className="text-sm font-bold uppercase tracking-wider text-slate-400 block">
                       Contributing Factors Evaluated
                     </span>
-                    <ul className="space-y-1.5 text-xs text-slate-300">
+                    <ul className="space-y-1.5 text-sm text-slate-300">
                       {diagnosis.contributingFactors && diagnosis.contributingFactors.length > 0 ? (
                         diagnosis.contributingFactors.map((factor, idx) => (
                           <li key={idx} className="flex items-start gap-2">
-                            <span className="text-sky-400 font-mono text-[10px] mt-0.5">•</span>
+                            <span className="text-sky-400 font-mono text-sm mt-0.5">•</span>
                             <span>{factor}</span>
                           </li>
                         ))
@@ -731,7 +732,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
 
                   {/* Recommended Actions */}
                   <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-4 space-y-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    <span className="text-sm font-bold uppercase tracking-wider text-slate-400 block">
                       AI Recommended Recovery Actions
                     </span>
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -739,14 +740,14 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                         diagnosis.recommendedActions.map((act) => (
                           <span
                             key={act}
-                            className="font-mono text-xs font-semibold rounded bg-sky-950/80 text-sky-300 border border-sky-800 px-3 py-1 flex items-center gap-1.5"
+                            className="font-mono text-sm font-semibold rounded bg-sky-950/80 text-sky-300 border border-sky-800 px-3 py-1 flex items-center gap-1.5"
                           >
                             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
                             <span>{act}</span>
                           </span>
                         ))
                       ) : (
-                        <span className="text-xs text-slate-500">No actions recommended.</span>
+                        <span className="text-sm text-slate-500">No actions recommended.</span>
                       )}
                     </div>
                   </div>
@@ -755,10 +756,10 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 {/* AI Reasoning & Empirical Evidence */}
                 {diagnosis.reasoning && (
                   <div className="rounded-xl border border-slate-800 bg-slate-950/90 p-4 space-y-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400 block">
+                    <span className="text-sm font-bold uppercase tracking-wider text-sky-400 block">
                       Diagnostic Reasoning & Hindsight Correlation Trail
                     </span>
-                    <p className="text-xs text-slate-300 leading-relaxed font-mono bg-slate-900/60 p-3 rounded-lg border border-slate-850">
+                    <p className="text-sm text-slate-300 leading-relaxed font-mono bg-slate-900/60 p-3 rounded-lg border border-slate-850">
                       {diagnosis.reasoning}
                     </p>
                   </div>
@@ -770,7 +771,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 <h3 className="text-sm font-semibold text-slate-300">
                   Diagnosis Pending for this Incident
                 </h3>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                <p className="text-sm text-slate-500 max-w-md mx-auto">
                   Click &ldquo;Run Autonomous Recovery Pipeline&rdquo; above to invoke OpenRouter with Hindsight memory retrieval and generate a root cause analysis.
                 </p>
               </div>
@@ -786,7 +787,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   <h2 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
                     <span>Hindsight Memory Retrieval & Diagnostic Influence</span>
                     <span
-                      className={`rounded px-2.5 py-0.5 font-mono text-[10px] font-bold border ${
+                      className={`rounded px-2.5 py-0.5 font-mono text-sm font-bold border ${
                         hasUsedPreviousMemory
                           ? "bg-emerald-950 text-emerald-300 border-emerald-800/60"
                           : "bg-slate-800 text-slate-400 border-slate-700"
@@ -797,7 +798,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                         : "● INITIAL INVARIANT OBSERVATION"}
                     </span>
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-sm text-slate-400 mt-0.5">
                     Historical failure vectors recalled from PostgreSQL during the investigation phase and injected into AI prompt context.
                   </p>
                 </div>
@@ -814,25 +815,25 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                     <div>
                       <div className="flex items-center justify-between gap-2 border-b border-slate-850 pb-2.5">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800/50">
+                          <span className="font-mono text-sm font-bold text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800/50">
                             {mem.memoryId}
                           </span>
-                          <span className="font-mono text-[10px] text-slate-400">
+                          <span className="font-mono text-sm text-slate-400">
                             {mem.patternCode}
                           </span>
                         </div>
-                        <span className="rounded bg-emerald-950/80 border border-emerald-800/60 px-2 py-0.5 text-[10px] font-bold text-emerald-300 font-mono">
+                        <span className="rounded bg-emerald-950/80 border border-emerald-800/60 px-2 py-0.5 text-sm font-bold text-emerald-300 font-mono">
                           {formatConfidence(mem.confidence)} Recall
                         </span>
                       </div>
 
-                      <h4 className="text-xs font-bold text-white mt-2.5 line-clamp-1">
+                      <h4 className="text-sm font-bold text-white mt-2.5 line-clamp-1">
                         {mem.title}
                       </h4>
 
-                      <div className="mt-2 space-y-1.5 text-xs">
+                      <div className="mt-2 space-y-1.5 text-sm">
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                          <span className="text-sm font-bold uppercase tracking-wider text-slate-500 block">
                             Historical Lesson Applied
                           </span>
                           <p className="text-slate-300 font-medium leading-relaxed line-clamp-2">
@@ -841,17 +842,17 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                         </div>
 
                         <div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400 block">
+                          <span className="text-sm font-bold uppercase tracking-wider text-sky-400 block">
                             Relationship to Current Incident
                           </span>
-                          <p className="text-sky-200/90 text-[11px] leading-relaxed line-clamp-2">
+                          <p className="text-sky-200/90 text-sm leading-relaxed line-clamp-2">
                             {mem.relationship}
                           </p>
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-3 border-t border-slate-850 pt-2 flex items-center justify-between text-[11px]">
+                    <div className="mt-3 border-t border-slate-850 pt-2 flex items-center justify-between text-sm">
                       <span className="text-emerald-400 font-mono">
                         Validated Outcome: {mem.outcome}
                       </span>
@@ -865,7 +866,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
             ) : (
               <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-6 text-center space-y-2">
                 <Database className="mx-auto h-6 w-6 text-slate-500" />
-                <p className="text-xs text-slate-400">
+                <p className="text-sm text-slate-400">
                   No historical memories were directly cited during the initial anomaly phase. This incident serves as a novel failure signature and will become a precedent for future cluster anomalies.
                 </p>
               </div>
@@ -888,7 +889,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </div>
               {execution && (
                 <span
-                  className={`rounded px-2.5 py-0.5 text-[10px] font-bold uppercase font-mono border ${
+                  className={`rounded px-2.5 py-0.5 text-sm font-bold uppercase font-mono border ${
                     execution.status === "success"
                       ? "bg-emerald-950 text-emerald-300 border-emerald-800"
                       : "bg-amber-950 text-amber-300 border-amber-800"
@@ -900,20 +901,20 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
             </div>
 
             {execution ? (
-              <div className="space-y-3.5 text-xs">
+              <div className="space-y-3.5 text-sm">
                 <div className="rounded-lg bg-slate-950/80 p-3.5 border border-slate-850 space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  <span className="text-sm font-bold uppercase tracking-wider text-slate-400 block">
                     Selected Recovery Action
                   </span>
                   <div className="font-mono text-sm font-bold text-amber-300">
                     [{execution.action}]
                   </div>
-                  <p className="text-slate-300 text-xs pt-1 leading-relaxed">
+                  <p className="text-slate-300 text-sm pt-1 leading-relaxed">
                     {execution.result || "Controlled mitigation routine executed."}
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="grid grid-cols-2 gap-2 text-sm font-mono">
                   <div className="rounded-lg bg-slate-950/60 p-2.5 border border-slate-850">
                     <span className="text-slate-500 block">Execution Duration:</span>
                     <span className="text-white font-bold">{execution.executionDurationMs}ms</span>
@@ -926,7 +927,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                   </div>
                 </div>
 
-                <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-850">
+                <div className="text-sm text-slate-400 flex items-center justify-between pt-1 border-t border-slate-850">
                   <span>Engine: <strong className="text-slate-200">{execution.executedBy}</strong></span>
                   <span className="text-emerald-400">Safety Tier: Whitelisted</span>
                 </div>
@@ -934,7 +935,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
             ) : (
               <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center space-y-2">
                 <Zap className="mx-auto h-6 w-6 text-slate-500" />
-                <p className="text-xs text-slate-400">
+                <p className="text-sm text-slate-400">
                   No recovery action executed yet. Run the pipeline to apply the whitelisted mitigation routine.
                 </p>
               </div>
@@ -952,7 +953,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               </div>
               {verification && (
                 <span
-                  className={`rounded px-2.5 py-0.5 text-[10px] font-bold uppercase font-mono border ${
+                  className={`rounded px-2.5 py-0.5 text-sm font-bold uppercase font-mono border ${
                     verification.verificationStatus === "verified_resolved"
                       ? "bg-emerald-950 text-emerald-300 border-emerald-800"
                       : "bg-sky-950 text-sky-300 border-sky-800"
@@ -964,12 +965,12 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
             </div>
 
             {verification ? (
-              <div className="space-y-3.5 text-xs">
+              <div className="space-y-3.5 text-sm">
                 <div className="rounded-lg bg-slate-950/80 p-3.5 border border-slate-850 space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  <span className="text-sm font-bold uppercase tracking-wider text-slate-400 block">
                     Health Probe Verification Result
                   </span>
-                  <p className="text-slate-200 text-xs leading-relaxed">
+                  <p className="text-slate-200 text-sm leading-relaxed">
                     {verification.verificationResult}
                   </p>
                 </div>
@@ -977,32 +978,36 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 {/* Telemetry Metrics Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono">
                   <div className="rounded-lg bg-slate-950/60 p-2 border border-slate-855">
-                    <span className="text-[10px] text-slate-500 block">P99 Latency</span>
-                    <span className="text-xs font-bold text-emerald-400">
+                    <span className="text-sm text-slate-500 block">P99 Latency</span>
+                    <span className="text-sm font-bold text-emerald-400">
                       {String((verification.metrics as Record<string, unknown>)?.p99LatencyMs || "134ms")}
                     </span>
                   </div>
                   <div className="rounded-lg bg-slate-950/60 p-2 border border-slate-855">
-                    <span className="text-[10px] text-slate-500 block">Error Rate</span>
-                    <span className="text-xs font-bold text-emerald-400">
-                      {String((verification.metrics as Record<string, unknown>)?.errorRatePercent || "0.01%")}
+                    <span className="text-sm text-slate-500 block">Error Rate</span>
+                    <span className="text-sm font-bold text-emerald-400">
+                      {String(
+                        (verification.metrics as Record<string, unknown>)?.errorRatePercent ?? "Not recorded"
+                      )}
                     </span>
                   </div>
                   <div className="rounded-lg bg-slate-950/60 p-2 border border-slate-855">
-                    <span className="text-[10px] text-slate-500 block">Connections</span>
-                    <span className="text-xs font-bold text-white">
-                      {String((verification.metrics as Record<string, unknown>)?.activeConnections || "224")}
+                    <span className="text-sm text-slate-500 block">Connections</span>
+                    <span className="text-sm font-bold text-white">
+                      {String(
+                        (verification.metrics as Record<string, unknown>)?.activeConnections ?? "Not recorded"
+                      )}
                     </span>
                   </div>
                   <div className="rounded-lg bg-slate-950/60 p-2 border border-slate-855">
-                    <span className="text-[10px] text-slate-500 block">SLO Status</span>
-                    <span className="text-xs font-bold text-emerald-300">
+                    <span className="text-sm text-slate-500 block">SLO Status</span>
+                    <span className="text-sm font-bold text-emerald-300">
                       {verification.isResolved ? "PASSED" : "PENDING"}
                     </span>
                   </div>
                 </div>
 
-                <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-850">
+                <div className="text-sm text-slate-400 flex items-center justify-between pt-1 border-t border-slate-850">
                   <span>Record ID: <strong className="font-mono text-slate-200">{verification.id}</strong></span>
                   <span className="text-emerald-400">Automated Canary: Active</span>
                 </div>
@@ -1010,7 +1015,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
             ) : (
               <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center space-y-2">
                 <ShieldCheck className="mx-auto h-6 w-6 text-slate-500" />
-                <p className="text-xs text-slate-400">
+                <p className="text-sm text-slate-400">
                   Awaiting telemetry verification probe. Will run automatically once mitigation routine completes.
                 </p>
               </div>
@@ -1029,42 +1034,42 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 <h3 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
                   <span>Codified Organizational Learning (Hindsight Memory)</span>
                   {learnedMemory && (
-                    <span className="font-mono text-xs font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800/60">
+                    <span className="font-mono text-sm font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800/60">
                       {learnedMemory.memoryCode}
                     </span>
                   )}
                 </h3>
-                <p className="text-xs text-cyan-200/70 mt-0.5">
+                <p className="text-sm text-cyan-200/70 mt-0.5">
                   Permanent immunity rule indexed into PostgreSQL table `hindsight_memories`.
                 </p>
               </div>
             </div>
 
             {learnedMemory && (
-              <span className="font-mono text-xs font-bold text-emerald-300 bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-800/60">
+              <span className="font-mono text-sm font-bold text-emerald-300 bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-800/60">
                 Outcome: {learnedMemory.outcome} ({formatConfidence(learnedMemory.confidence)} Certainty)
               </span>
             )}
           </div>
 
           {learnedMemory ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div className="md:col-span-2 rounded-xl bg-slate-950/70 p-4 border border-cyan-800/30 space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300 block">
+                <span className="text-sm font-bold uppercase tracking-wider text-cyan-300 block">
                   Codified Organizational Lesson
                 </span>
                 <p className="text-sm font-medium text-slate-100 leading-relaxed">
                   &ldquo;{learnedMemory.learnedInsight}&rdquo;
                 </p>
                 {learnedMemory.extractedRule && (
-                  <div className="pt-2 border-t border-slate-850 mt-2 text-[11px] text-slate-300 font-mono">
+                  <div className="pt-2 border-t border-slate-850 mt-2 text-sm text-slate-300 font-mono">
                     <strong className="text-cyan-400">Architectural Rule:</strong> {learnedMemory.extractedRule}
                   </div>
                 )}
               </div>
 
-              <div className="rounded-xl bg-slate-950/70 p-4 border border-cyan-800/30 space-y-2 font-mono text-[11px]">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block font-sans">
+              <div className="rounded-xl bg-slate-950/70 p-4 border border-cyan-800/30 space-y-2 font-mono text-sm">
+                <span className="text-sm font-bold uppercase tracking-wider text-slate-400 block font-sans">
                   Hindsight Vector Coordinates
                 </span>
                 <div>
@@ -1084,7 +1089,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           ) : (
             <div className="rounded-xl border border-dashed border-cyan-900/40 bg-slate-950/40 p-8 text-center space-y-2">
               <Database className="mx-auto h-6 w-6 text-slate-500" />
-              <p className="text-xs text-slate-400">
+              <p className="text-sm text-slate-400">
                 This incident has not yet been codified into long-term organizational memory. Run the pipeline to crystallize learnings into PostgreSQL.
               </p>
             </div>
@@ -1102,7 +1107,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
                 Immutable Compliance Audit Trail ({auditLogs.length})
               </h3>
             </div>
-            <span className="text-xs font-mono text-purple-300 bg-purple-950/60 px-2.5 py-0.5 rounded border border-purple-800/40">
+            <span className="text-sm font-mono text-purple-300 bg-purple-950/60 px-2.5 py-0.5 rounded border border-purple-800/40">
               PostgreSQL Table `audit_logs`
             </span>
           </div>
@@ -1112,24 +1117,24 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
               {auditLogs.map((log, idx) => (
                 <div
                   key={log.id || idx}
-                  className="rounded-lg border border-slate-850 bg-slate-950/70 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  className="rounded-lg border border-slate-850 bg-slate-950/70 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/50">
+                      <span className="font-mono text-sm font-bold text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/50">
                         {log.eventType}
                       </span>
                       <span className="text-slate-400">•</span>
                       <span className="text-slate-300 font-medium">{log.actor}</span>
                     </div>
                     {log.details && (
-                      <p className="text-slate-400 text-[11px] font-mono truncate max-w-xl">
+                      <p className="text-slate-400 text-sm font-mono truncate max-w-xl">
                         {typeof log.details === "string" ? log.details : JSON.stringify(log.details)}
                       </p>
                     )}
                   </div>
 
-                  <span className="font-mono text-[11px] text-slate-500 shrink-0">
+                  <span className="font-mono text-sm text-slate-500 shrink-0">
                     {log.timestamp ? formatDateTime(log.timestamp) : "Recent"}
                   </span>
                 </div>
@@ -1138,7 +1143,7 @@ export function IncidentDetailView({ incidentId, initialIncident }: IncidentDeta
           ) : (
             <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-6 text-center space-y-1">
               <FileText className="mx-auto h-6 w-6 text-slate-500" />
-              <p className="text-xs text-slate-400">No audit events logged for this incident yet.</p>
+              <p className="text-sm text-slate-400">No audit events logged for this incident yet.</p>
             </div>
           )}
         </div>

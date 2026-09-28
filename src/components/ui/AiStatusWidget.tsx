@@ -118,10 +118,10 @@ export function AiStatusWidget() {
 
           <div className="mt-3 border-t border-slate-800 pt-2.5">
             <Link
-              href="/ai-command"
+              href="/demo"
               className="flex items-center justify-between text-[11px] font-medium text-cyan-400 hover:text-cyan-300"
             >
-              <span>Launch AI Reasoning Console</span>
+              <span>Launch Interactive Demo</span>
               <Activity className="h-3.5 w-3.5" />
             </Link>
           </div>

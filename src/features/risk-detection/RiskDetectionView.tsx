@@ -210,7 +210,7 @@ export function RiskDetectionView() {
 
           <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
             <Link
-              href="/hindsight"
+              href="/memory"
               className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
             >
               Explore Memory Vectors <ChevronRight className="h-3.5 w-3.5" />
