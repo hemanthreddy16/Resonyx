@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS hindsight_memories (
   pattern_code VARCHAR(64) NOT NULL,
   confidence_score NUMERIC DEFAULT 90.0,
   similarity_threshold NUMERIC DEFAULT 85.0,
+  recall_count INTEGER DEFAULT 1,
   semantic_tags JSONB DEFAULT '[]',
   raw_payload JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),

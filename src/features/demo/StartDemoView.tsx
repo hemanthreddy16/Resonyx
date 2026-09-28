@@ -296,6 +296,9 @@ export function StartDemoView() {
                 memories: rec.memories || 0,
                 auditLogs: rec.auditLogs || 0,
               });
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("resonyx:demo_completed"));
+              }
             }
           } catch (e) {
             console.error("[Demo] Learn step failed:", e);

@@ -1143,13 +1143,223 @@ export async function getAllHindsightMemories(): Promise<HindsightMemoryRecord[]
     }
   }
 
-  return Array.from(new Set(memoryStore.hindsightMemories.values()));
+  return Array.from(memoryStore.hindsightMemories.values());
+}
+
+export interface DashboardStatsResult {
+  metrics: {
+    totalIncidents: number;
+    totalDiagnoses: number;
+    recoveryExecutions: number;
+    successfulRecoveries: number;
+    verifiedRecoveries: number;
+    learnedMemories: number;
+    auditEvents: number;
+    activeIncidents: number;
+  };
+  learningImpact: {
+    memoriesStored: number;
+    memoriesRecalled: number;
+    successfulRecoveryOutcomes: number;
+    averageConfidence: number;
+  };
+  recentIncidents: Incident[];
+  recentLearnings: Array<{
+    memoryId: string;
+    incidentTitle: string;
+    rootCause: string;
+    outcome: string;
+    confidence: number;
+    createdTime: string;
+    service: string;
+    learnedInsight: string;
+  }>;
+  isLiveDatabase: boolean;
+}
+
+export async function getDashboardStats(): Promise<DashboardStatsResult> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+
+      // 1. Metric counts
+      const [
+        incRes,
+        diagRes,
+        execRes,
+        succExecRes,
+        verRes,
+        memRes,
+        auditRes,
+        activeIncRes,
+      ] = await Promise.all([
+        client.query("SELECT COUNT(*) as c FROM incidents;").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM diagnoses;").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM action_executions;").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM action_executions WHERE status = 'success';").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM verifications WHERE verification_status = 'verified_resolved';").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM hindsight_memories;").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM audit_logs;").catch(() => ({ rows: [{ c: "0" }] })),
+        client.query("SELECT COUNT(*) as c FROM incidents WHERE status = 'investigating';").catch(() => ({ rows: [{ c: "0" }] })),
+      ]);
+
+      // 2. Learning impact
+      const [impactRes, succMemRes] = await Promise.all([
+        client.query(`
+          SELECT COUNT(*) as stored,
+                 COALESCE(SUM(recall_count), 0) as recalled,
+                 COALESCE(AVG(confidence_score), 95.0) as avg_conf
+          FROM hindsight_memories;
+        `).catch(() => ({ rows: [{ stored: "0", recalled: "0", avg_conf: "95.0" }] })),
+        client.query(`
+          SELECT COUNT(*) as c FROM hindsight_memories WHERE outcome IN ('Recovered', 'Mitigated');
+        `).catch(() => ({ rows: [{ c: "0" }] })),
+      ]);
+
+      // 3. Recent Incidents
+      const recentIncRes = await client.query(`
+        SELECT * FROM incidents
+        ORDER BY occurred_at DESC, created_at DESC
+        LIMIT 5;
+      `).catch(() => ({ rows: [] }));
+
+      const recentIncidents: Incident[] = (recentIncRes.rows || []).map((row) => ({
+        id: row.id,
+        code: row.code,
+        title: row.title,
+        service: row.service,
+        environment: row.environment,
+        severity: row.severity,
+        status: row.status,
+        detectedTime: row.detected_time,
+        occurredAt: row.occurred_at ? new Date(row.occurred_at).toISOString() : new Date().toISOString(),
+        resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : "In Progress",
+        mttrMinutes: row.mttr_minutes || 0,
+        impactCost: Number(row.impact_cost) || 0,
+        affectedUsers: Number(row.affected_users) || 0,
+        rootCauseDomain: row.root_cause_domain,
+        hindsightVectorId: row.hindsight_vector_id || "vec_default",
+        similarityMatchCount: row.similarity_match_count || 4,
+        summary: row.summary,
+        timelineEvents: row.timeline_events || [],
+        aiRootCause: row.ai_root_cause || {
+          likelyCause: row.summary || "Pending investigation",
+          confidence: 90,
+        },
+        hindsightRecall: row.hindsight_recall || [],
+        evidence: row.evidence || {},
+        keyLearnings: row.key_learnings || [],
+        preventativeMeasures: row.preventative_measures || [],
+        tags: row.tags || [],
+        riskLevel: row.risk_level || row.severity,
+        patternMatch: row.pattern_match || undefined,
+      }));
+
+      // 4. Recent Learnings
+      const recentMemRes = await client.query(`
+        SELECT * FROM hindsight_memories
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 6;
+      `).catch(() => ({ rows: [] }));
+
+      const recentLearnings = (recentMemRes.rows || []).map((r) => ({
+        memoryId: r.memory_code,
+        incidentTitle: r.title,
+        rootCause: r.root_cause,
+        outcome: r.outcome,
+        confidence: Number(r.confidence_score) || 95.0,
+        createdTime: new Date(r.updated_at || r.created_at).toISOString(),
+        service: r.source_incident_code || "Unknown Service",
+        learnedInsight: r.learned_insight || "",
+      }));
+
+      const totalInc = parseInt(incRes.rows[0]?.c || "0", 10);
+      const totalDiag = parseInt(diagRes.rows[0]?.c || "0", 10);
+      const totalExec = parseInt(execRes.rows[0]?.c || "0", 10);
+      const succExec = parseInt(succExecRes.rows[0]?.c || "0", 10);
+      const verRec = parseInt(verRes.rows[0]?.c || "0", 10);
+      const learnedMem = parseInt(memRes.rows[0]?.c || "0", 10);
+      const auditEvt = parseInt(auditRes.rows[0]?.c || "0", 10);
+      const activeInc = parseInt(activeIncRes.rows[0]?.c || "0", 10);
+
+      const stored = parseInt(impactRes.rows[0]?.stored || "0", 10);
+      const recalled = parseInt(impactRes.rows[0]?.recalled || "0", 10);
+      const avgConf = parseFloat(Number(impactRes.rows[0]?.avg_conf || 95.0).toFixed(1));
+      const succOutcomes = parseInt(succMemRes.rows[0]?.c || "0", 10);
+
+      return {
+        metrics: {
+          totalIncidents: totalInc,
+          totalDiagnoses: totalDiag,
+          recoveryExecutions: totalExec,
+          successfulRecoveries: succExec,
+          verifiedRecoveries: verRec,
+          learnedMemories: learnedMem,
+          auditEvents: auditEvt,
+          activeIncidents: activeInc,
+        },
+        learningImpact: {
+          memoriesStored: stored,
+          memoriesRecalled: recalled,
+          successfulRecoveryOutcomes: succOutcomes,
+          averageConfidence: avgConf,
+        },
+        recentIncidents,
+        recentLearnings,
+        isLiveDatabase: true,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in getDashboardStats:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  // In-memory fallback
+  const allInc = Array.from(memoryStore.incidents.values());
+  const allMem = Array.from(memoryStore.hindsightMemories.values());
+
+  return {
+    metrics: {
+      totalIncidents: memoryStore.incidents.size,
+      totalDiagnoses: memoryStore.diagnoses.size,
+      recoveryExecutions: memoryStore.actionExecutions.size,
+      successfulRecoveries: Array.from(memoryStore.actionExecutions.values()).filter((e) => e.status === "success").length,
+      verifiedRecoveries: Array.from(memoryStore.verifications.values()).filter((v) => v.verificationStatus === "verified_resolved").length,
+      learnedMemories: memoryStore.hindsightMemories.size,
+      auditEvents: memoryStore.auditLogs.length,
+      activeIncidents: allInc.filter((i) => i.status === "investigating").length,
+    },
+    learningImpact: {
+      memoriesStored: memoryStore.hindsightMemories.size,
+      memoriesRecalled: allMem.reduce((acc, m) => acc + (m.recallCount || 1), 0),
+      successfulRecoveryOutcomes: allMem.filter((m) => m.outcome === "Recovered" || m.outcome === "Mitigated").length,
+      averageConfidence: allMem.length > 0 ? parseFloat((allMem.reduce((acc, m) => acc + (m.confidence || 95), 0) / allMem.length).toFixed(1)) : 95.0,
+    },
+    recentIncidents: allInc.slice(0, 5),
+    recentLearnings: allMem.slice(0, 6).map((m) => ({
+      memoryId: m.memoryCode,
+      incidentTitle: m.sourceIncident,
+      rootCause: m.rootCause,
+      outcome: m.outcome,
+      confidence: m.confidence,
+      createdTime: m.indexingDate,
+      service: m.sourceIncidentCode,
+      learnedInsight: m.learnedInsight,
+    })),
+    isLiveDatabase: false,
+  };
 }
 
 export const db = {
   getDbPool,
   isDatabaseConnected,
   getDatabaseHealth,
+  getDashboardStats,
   initDbSchema,
   insertIncident,
   getAllIncidents,
