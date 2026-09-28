@@ -19,6 +19,7 @@ import {
   Radio,
   Sparkles,
   Play,
+  Brain,
 } from "lucide-react";
 import { ResonyxLogo } from "@/components/branding/ResonyxLogo";
 import { cn } from "@/utils/cn";
@@ -43,6 +44,13 @@ const PRIMARY_NAV_ITEMS: NavItem[] = [
     icon: AlertOctagon,
     badge: "5",
     badgeType: "neutral",
+  },
+  {
+    name: "Knowledge Center",
+    href: "/memory",
+    icon: Brain,
+    badge: "Neural",
+    badgeType: "azure",
   },
   {
     name: "Pattern Intelligence",

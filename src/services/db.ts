@@ -1329,6 +1329,252 @@ export async function getRecalledMemoriesForIncident(
   return recalled;
 }
 
+export interface MemoryCenterItem {
+  id: string;
+  memoryId: string;
+  incidentTitle: string;
+  rootCause: string;
+  knowledgeDomain: string;
+  learnedInsight: string;
+  outcome: string;
+  outcomeDetail?: string;
+  action: string;
+  extractedRule: string;
+  antiPatternSignature?: string;
+  patternCode: string;
+  confidence: number;
+  createdTimestamp: string;
+  vectorId: string;
+  recallCount: number;
+  semanticTags: string[];
+  createdIncident?: {
+    id: string;
+    code: string;
+    title: string;
+    service: string;
+    severity?: string;
+    status?: string;
+  } | null;
+  usedInDiagnoses: Array<{
+    incidentId: string;
+    incidentCode: string;
+    incidentTitle: string;
+    service: string;
+    confidence: number;
+    usedAt: string;
+  }>;
+  isNew: boolean;
+  isRecalled: boolean;
+  isHighConfidence: boolean;
+  isSuccessful: boolean;
+}
+
+export interface MemoryCenterStats {
+  totalMemories: number;
+  averageConfidence: number;
+  successfulOutcomes: number;
+  memoriesRecalled: number;
+  totalCitations: number;
+  recentLearningEvents: number;
+}
+
+export interface MemoryCenterResult {
+  stats: MemoryCenterStats;
+  memories: MemoryCenterItem[];
+  isLiveDatabase: boolean;
+}
+
+export async function getMemoryCenterData(): Promise<MemoryCenterResult> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+
+      // 1. Fetch all memories
+      const memRes = await client.query(
+        `SELECT * FROM hindsight_memories ORDER BY updated_at DESC, created_at DESC;`
+      ).catch(() => ({ rows: [] }));
+
+      // 2. Fetch all incidents for relationship mapping
+      const incRes = await client.query(
+        `SELECT id, code, title, service, severity, status FROM incidents;`
+      ).catch(() => ({ rows: [] }));
+      const incidentsById = new Map<string, { id: string; code: string; title: string; service: string; severity?: string; status?: string }>();
+      const incidentsByCode = new Map<string, { id: string; code: string; title: string; service: string; severity?: string; status?: string }>();
+      for (const r of incRes.rows) {
+        incidentsById.set(String(r.id).toLowerCase(), r);
+        if (r.code) incidentsByCode.set(String(r.code).toLowerCase(), r);
+      }
+
+      // 3. Fetch diagnoses to discover real memory citations
+      const diagRes = await client.query(`
+        SELECT d.id, d.incident_id, d.model, d.root_cause, d.confidence, d.reasoning, d.created_at,
+               i.code as incident_code, i.title as incident_title, i.service as incident_service
+        FROM diagnoses d
+        JOIN incidents i ON i.id = d.incident_id
+        ORDER BY d.created_at DESC;
+      `).catch(() => ({ rows: [] }));
+
+      const memories: MemoryCenterItem[] = [];
+      let totalCitations = 0;
+
+      for (const r of memRes.rows) {
+        const memCode = r.memory_code || "";
+        const memId = r.id || "";
+        const sourceIncId = (r.source_incident_id || "").toLowerCase();
+        const sourceIncCode = (r.source_incident_code || "").toLowerCase();
+
+        // Find creating incident
+        const inc =
+          incidentsById.get(sourceIncId) ||
+          incidentsByCode.get(sourceIncCode) ||
+          incidentsById.get(memId.toLowerCase().replace("mem-", "inc-")) ||
+          null;
+
+        const createdIncident = inc
+          ? {
+              id: inc.id,
+              code: inc.code || `INC-${inc.id.slice(0, 6)}`,
+              title: inc.title,
+              service: inc.service,
+              severity: inc.severity,
+              status: inc.status,
+            }
+          : null;
+
+        // Find real diagnoses where this memory was used/cited
+        const usedInDiagnoses: MemoryCenterItem["usedInDiagnoses"] = [];
+        for (const diag of diagRes.rows) {
+          const reasoning = diag.reasoning || "";
+          if (
+            memCode &&
+            reasoning.toLowerCase().includes(memCode.toLowerCase()) &&
+            diag.incident_id.toLowerCase() !== sourceIncId &&
+            (!diag.incident_code || diag.incident_code.toLowerCase() !== sourceIncCode)
+          ) {
+            usedInDiagnoses.push({
+              incidentId: diag.incident_id,
+              incidentCode: diag.incident_code || `INC-${diag.incident_id.slice(0, 6)}`,
+              incidentTitle: diag.incident_title || "Production Incident",
+              service: diag.incident_service || "system-service",
+              confidence: Number(diag.confidence) || 94.0,
+              usedAt: new Date(diag.created_at).toISOString(),
+            });
+          }
+        }
+
+        totalCitations += usedInDiagnoses.length;
+        const conf = Number(r.confidence_score) || 95.0;
+        const outcome = r.outcome || "Recovered";
+        const recallCount = Number(r.recall_count) || (usedInDiagnoses.length > 0 ? usedInDiagnoses.length + 1 : 1);
+        const isRecalled = usedInDiagnoses.length > 0 || recallCount > 1;
+        const isHighConfidence = conf >= 95.0;
+        const isSuccessful = outcome === "Recovered" || outcome === "Mitigated";
+
+        // Check if created recently
+        const createdDate = new Date(r.created_at || Date.now());
+        const ageHours = (Date.now() - createdDate.getTime()) / (1000 * 60 * 60);
+        const isNew = ageHours <= 48 || recallCount <= 1;
+
+        memories.push({
+          id: r.id,
+          memoryId: memCode || `MEM-${r.id.slice(0, 6)}`,
+          incidentTitle: r.title || "Codified Failure Memory",
+          rootCause: r.root_cause || "Infrastructure Contention",
+          knowledgeDomain: r.knowledge_domain || "System Architecture",
+          learnedInsight: r.learned_insight || r.extracted_rule || "Postmortem insight codified into permanent memory.",
+          outcome,
+          outcomeDetail: r.outcome_detail || "",
+          action: r.action || "isolate_bulkhead",
+          extractedRule: r.extracted_rule || "",
+          antiPatternSignature: r.anti_pattern_signature || "",
+          patternCode: r.pattern_code || "PAT-RESILIENCE",
+          confidence: conf,
+          createdTimestamp: new Date(r.created_at || Date.now()).toISOString(),
+          vectorId: r.vector_id || "vec_default",
+          recallCount,
+          semanticTags: Array.isArray(r.semantic_tags) ? r.semantic_tags : [],
+          createdIncident,
+          usedInDiagnoses,
+          isNew,
+          isRecalled,
+          isHighConfidence,
+          isSuccessful,
+        });
+      }
+
+      const totalMemories = memories.length;
+      const averageConfidence =
+        totalMemories > 0
+          ? parseFloat((memories.reduce((acc, m) => acc + m.confidence, 0) / totalMemories).toFixed(1))
+          : 95.0;
+      const successfulOutcomes = memories.filter((m) => m.isSuccessful).length;
+      const memoriesRecalled = memories.filter((m) => m.isRecalled).length;
+      const recentLearningEvents = memories.filter((m) => m.isNew).length;
+
+      return {
+        stats: {
+          totalMemories,
+          averageConfidence,
+          successfulOutcomes,
+          memoriesRecalled,
+          totalCitations,
+          recentLearningEvents,
+        },
+        memories,
+        isLiveDatabase: true,
+      };
+    } catch (err: unknown) {
+      console.error("[PostgreSQL] Error in getMemoryCenterData:", err);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  // In-memory fallback
+  const allMem = Array.from(memoryStore.hindsightMemories.values());
+  const memories: MemoryCenterItem[] = allMem.map((m) => ({
+    id: m.id,
+    memoryId: m.memoryCode,
+    incidentTitle: m.sourceIncident,
+    rootCause: m.rootCause,
+    knowledgeDomain: m.knowledgeDomain,
+    learnedInsight: m.learnedInsight || m.extractedRule,
+    outcome: m.outcome,
+    outcomeDetail: m.outcomeDetail,
+    action: m.action,
+    extractedRule: m.extractedRule,
+    antiPatternSignature: m.antiPatternSignature,
+    patternCode: m.patternCode,
+    confidence: m.confidence,
+    createdTimestamp: m.indexingDate,
+    vectorId: m.vectorId,
+    recallCount: m.recallCount || 1,
+    semanticTags: m.semanticTags || [],
+    createdIncident: null,
+    usedInDiagnoses: [],
+    isNew: true,
+    isRecalled: false,
+    isHighConfidence: m.confidence >= 95.0,
+    isSuccessful: m.outcome === "Recovered" || m.outcome === "Mitigated",
+  }));
+
+  return {
+    stats: {
+      totalMemories: memories.length,
+      averageConfidence: memories.length > 0 ? parseFloat((memories.reduce((acc, m) => acc + m.confidence, 0) / memories.length).toFixed(1)) : 95.0,
+      successfulOutcomes: memories.filter((m) => m.isSuccessful).length,
+      memoriesRecalled: 0,
+      totalCitations: 0,
+      recentLearningEvents: memories.length,
+    },
+    memories,
+    isLiveDatabase: false,
+  };
+}
+
 export interface DashboardStatsResult {
   metrics: {
     totalIncidents: number;
@@ -1563,5 +1809,6 @@ export const db = {
   getAllHindsightMemories,
   getLearnedMemoryForIncident,
   getRecalledMemoriesForIncident,
+  getMemoryCenterData,
   listIncidents: getAllIncidents,
 };
