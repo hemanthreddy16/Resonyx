@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  MessageSquareText,
 } from "lucide-react";
 import { ResonyxLogo } from "@/components/branding/ResonyxLogo";
 import { cn } from "@/utils/cn";
@@ -28,6 +29,11 @@ const NAV_ITEMS: NavItem[] = [
     name: "Demo",
     href: "/demo",
     icon: Sparkles,
+  },
+  {
+    name: "Ask Resonyx",
+    href: "/ask",
+    icon: MessageSquareText,
   },
   {
     name: "Overview",
