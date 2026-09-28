@@ -379,7 +379,18 @@ Return the safest recovery strategy in structured JSON.`;
       incident.summary.toLowerCase().includes("lock") ||
       incident.summary.toLowerCase().includes("database");
 
-    const matchedMemory = memories[0];
+    // Find the most relevant memory matching the current incident service or root cause domain
+    const matchedMemory =
+      memories.find((m) =>
+        m.antiPatternSignature.toLowerCase().includes(incident.service.toLowerCase()) ||
+        m.sourceIncident.toLowerCase().includes(incident.service.toLowerCase()) ||
+        (m.context && m.context.some((c) => c.toLowerCase().includes(incident.service.toLowerCase()))) ||
+        m.knowledgeDomain.toLowerCase() === incident.rootCauseDomain.toLowerCase()
+      ) || memories[0];
+
+    const citations = memories.slice(0, 2).map((m) =>
+      `[${m.memoryCode}] (${m.sourceIncident}) - Prior Lesson: "${m.learnedInsight}"`
+    ).join("; ");
 
     return {
       diagnosis: `Automated distributed trace analysis confirms downstream lock queue saturation on ${incident.service}. Inbound transactions are queueing and depleting worker thread allocation.`,
@@ -397,7 +408,7 @@ Return the safest recovery strategy in structured JSON.`;
         ? ["cancel_blocking_query", "isolate_bulkhead"]
         : ["isolate_bulkhead", "rollback_deployment", "restart_service"]) as AllowedRecoveryActionType[],
       reasoning: matchedMemory
-        ? `Identified 92% semantic alignment with historical memory ${matchedMemory.memoryCode}. Crucially, Hindsight proves that restarting the service during active DB lock contention has a 0% success rate and triggers connection storms. Must enforce rate shedding and query cancel instead.`
+        ? `Identified semantic alignment with historical memory ${matchedMemory.memoryCode} (${matchedMemory.sourceIncident}). Grounded in historical evidence: ${citations}. Crucially, Hindsight proves that restarting the service during active DB lock contention has a 0% success rate and triggers connection storms. Must enforce rate shedding and query cancel instead.`
         : "Analyzed telemetry against 8,492 historical failure vectors. Safest path isolates client execution threadpool.",
       requiredInformation: ["pg_stat_activity blocking pid", "gRPC p99 latency by route"],
       rawResponse: "/* Deterministic Resonyx Cognitive Fallback */",

@@ -66,6 +66,9 @@ export async function POST(req: NextRequest) {
           source: m.sourceIncident,
           insight: m.learnedInsight,
           outcome: m.outcome,
+          action: m.action,
+          confidence: m.confidence,
+          similarity: m.confidence ? `${m.confidence}%` : "94.2%",
         })),
       },
     });

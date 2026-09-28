@@ -972,7 +972,8 @@ export async function searchHindsightMemories(query: string, limit: number = 5):
               OR LOWER(title) LIKE ANY($1)
               OR LOWER(knowledge_domain) LIKE ANY($1)
               OR LOWER(pattern_code) LIKE ANY($1)
-           ORDER BY confidence_score DESC
+              OR LOWER(anti_pattern_signature) LIKE ANY($1)
+           ORDER BY confidence_score DESC, updated_at DESC, created_at DESC
            LIMIT $2;`,
           [patterns, limit]
         );
@@ -981,7 +982,7 @@ export async function searchHindsightMemories(query: string, limit: number = 5):
       if (!res || res.rows.length === 0) {
         res = await client.query(
           `SELECT * FROM hindsight_memories
-           ORDER BY confidence_score DESC
+           ORDER BY confidence_score DESC, updated_at DESC, created_at DESC
            LIMIT $1;`,
           [limit]
         );
