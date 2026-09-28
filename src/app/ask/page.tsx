@@ -28,7 +28,7 @@ interface ChatMessage {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Have we seen this failure before?",
+  "Have we seen payment API latency before?",
   "What fixed payment API latency last time, and what failed?",
   "Which action has the worst track record for database contention?",
 ];

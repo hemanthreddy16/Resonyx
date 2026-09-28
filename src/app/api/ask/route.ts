@@ -27,9 +27,7 @@ function isRateLimited(clientIp: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Relevance check
-// Returns true only when at least one recalled item is meaningfully related
-// to the question (not just the highest-confidence item in the DB).
+// Stop words & keyword helpers
 // ---------------------------------------------------------------------------
 const STOP_WORDS = new Set([
   "the","a","an","is","are","was","were","be","been","being","have","has","had",
@@ -39,7 +37,8 @@ const STOP_WORDS = new Set([
   "or","but","not","no","so","if","in","on","at","to","for","of","with","by",
   "from","as","about","than","more","any","all","some","been","very","just",
   "also","than","then","than","use","used","using","show","tell","give","list",
-  "see","find","get","has","have","had","we","seen","ever",
+  "see","find","get","has","have","had","we","seen","ever","before","last",
+  "time","happen","happened","similar","same","like","again","many","much",
 ]);
 
 function keywords(text: string): Set<string> {
@@ -58,45 +57,80 @@ function overlap(queryKw: Set<string>, text: string): number {
   for (const w of queryKw) {
     if (textKw.has(w)) hits++;
   }
-  return hits / queryKw.size; // ratio 0–1
+  return hits / queryKw.size;
 }
 
-// A memory is relevant if keyword overlap with any meaningful field exceeds threshold.
-const MEMORY_RELEVANCE_THRESHOLD = 0.15; // at least ~15% of query keywords found
-// An incident is relevant if keyword overlap exceeds threshold.
+// ---------------------------------------------------------------------------
+// Relevance check — keyword overlap thresholds
+// ---------------------------------------------------------------------------
+const MEMORY_RELEVANCE_THRESHOLD = 0.15;
 const INCIDENT_RELEVANCE_THRESHOLD = 0.15;
 
 function isMemoryRelevant(m: HindsightMemoryRecord, queryKw: Set<string>): boolean {
   const searchText = [
-    m.knowledgeDomain,
-    m.rootCause,
-    m.learnedInsight,
-    m.extractedRule,
-    m.action,
-    m.outcome,
-    m.outcomeDetail,
-    m.sourceIncident,
-    m.antiPatternSignature,
-    ...(m.semanticTags || []),
-  ]
-    .filter(Boolean)
-    .join(" ");
+    m.knowledgeDomain, m.rootCause, m.learnedInsight, m.extractedRule,
+    m.action, m.outcome, m.outcomeDetail, m.sourceIncident,
+    m.antiPatternSignature, ...(m.semanticTags || []),
+  ].filter(Boolean).join(" ");
   return overlap(queryKw, searchText) >= MEMORY_RELEVANCE_THRESHOLD;
 }
 
 function isIncidentRelevant(inc: Incident, queryKw: Set<string>): boolean {
   const searchText = [
-    inc.title,
-    inc.service,
-    inc.rootCauseDomain,
-    inc.summary,
+    inc.title, inc.service, inc.rootCauseDomain, inc.summary,
     ...(Array.isArray(inc.keyLearnings) ? inc.keyLearnings : []),
     ...(Array.isArray(inc.tags) ? inc.tags : []),
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ].filter(Boolean).join(" ");
   return overlap(queryKw, searchText) >= INCIDENT_RELEVANCE_THRESHOLD;
 }
+
+// ---------------------------------------------------------------------------
+// Vague-question detection
+// Matches questions that ask about past incidents/failures in general terms
+// but don't name a specific service, symptom, or domain.
+// ---------------------------------------------------------------------------
+const VAGUE_INCIDENT_PATTERNS = [
+  /\bhave\s+we\s+seen\b/i,
+  /\bseen\s+(this|that|a|any)\s+(failure|outage|incident|issue|problem|error)\b/i,
+  /\bwhat\s+(failed|broke|happened|went\s+wrong)\b/i,
+  /\bsimilar\s+(failure|incident|outage|issue|problem)s?\b/i,
+  /\bprevious\s+(failure|incident|outage|issue|problem)s?\b/i,
+  /\bpast\s+(failure|incident|outage|issue|problem)s?\b/i,
+  /\brecent\s+(failure|incident|outage|issue|problem)s?\b/i,
+  /\bhappened\s+(before|last\s+time|previously|recently)\b/i,
+  /\bfailure.*(before|again|recently|history)\b/i,
+  /\bany\s+(known|recorded|stored)\s+(failure|incident|issue|outage)\b/i,
+  /\bwhat\s+do\s+(we|you)\s+know\s+about\s+(failure|incident|outage)/i,
+  /\bshow\s+(me\s+)?(recent|past|all)\s+(failure|incident|outage)/i,
+  /\bsummar(y|ize)\s+(of\s+)?(recent|past|all)\s+(failure|incident|outage)/i,
+];
+
+// Incident-domain keywords — if the question contains at least one, it
+// is asking about a SPECIFIC service/domain, not a vague browsing question.
+const DOMAIN_KEYWORDS = [
+  "payment", "database", "contention", "latency", "timeout", "cpu", "memory",
+  "disk", "network", "auth", "authentication", "cache", "redis", "postgres",
+  "kafka", "queue", "api", "gateway", "dns", "ssl", "certificate", "deploy",
+  "kubernetes", "pod", "container", "node", "replica", "load", "balancer",
+  "circuit", "breaker", "rate", "limit", "oom", "deadlock", "lock",
+  "connection", "pool", "throughput", "error", "500", "503", "429",
+];
+
+function isVagueIncidentQuestion(question: string): boolean {
+  const q = question.toLowerCase();
+  // Must match at least one vague pattern
+  const matchesVague = VAGUE_INCIDENT_PATTERNS.some((re) => re.test(question));
+  if (!matchesVague) return false;
+  // Must NOT mention a specific domain keyword — if it does, it's a targeted
+  // question that should go through the normal recall + relevance path.
+  const mentionsDomain = DOMAIN_KEYWORDS.some((kw) => q.includes(kw));
+  return !mentionsDomain;
+}
+
+// Severity ordering for sorting
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0, high: 1, medium: 2, low: 3,
+};
 
 // ---------------------------------------------------------------------------
 // Citation extractor — scans LLM answer text for MEM-XXXX / INC-XXXX codes
@@ -116,7 +150,6 @@ function extractCitations(
     incidentCodes.add(c.toUpperCase());
   }
 
-  // Also add codes that appeared in the context and whose code appears in the answer
   for (const cm of contextMemories) {
     if (text.toLowerCase().includes(cm.memoryCode.toLowerCase())) {
       memoryCodes.add(cm.memoryCode);
@@ -173,52 +206,104 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- Recall: fetch more candidates to support aggregate questions ---
-    let allRecalledMemories: HindsightMemoryRecord[] = [];
-    let allRecalledIncidents: Incident[] = [];
+    // --- Determine if the question is a vague incident-browsing question ---
+    const vagueMode = isVagueIncidentQuestion(question);
 
-    try {
-      allRecalledMemories = await hindsightService.getRelevantMemories(question, 8);
-      const recallResults = await hindsightService.recallSimilarIncidents(question, 6);
-      allRecalledIncidents = recallResults.map((r) => r.incident);
-    } catch {
-      // Fallback: keyword filter over full DB — NO unconditional top-N grab
-      const allMems = await getAllHindsightMemories();
+    let relevantMemories: HindsightMemoryRecord[] = [];
+    let relevantIncidents: Incident[] = [];
+
+    if (vagueMode) {
+      // Vague browsing question — skip keyword threshold, provide top
+      // recent / highest-severity incidents and their associated memories.
       const allIncs = await getAllIncidents();
-      const qLower = question.toLowerCase();
-      allRecalledMemories = allMems.filter(
-        (m) =>
-          m.sourceIncident.toLowerCase().includes(qLower) ||
-          m.knowledgeDomain.toLowerCase().includes(qLower) ||
-          m.rootCause.toLowerCase().includes(qLower) ||
-          m.learnedInsight.toLowerCase().includes(qLower)
-      );
-      allRecalledIncidents = allIncs.filter(
-        (inc) =>
-          inc.title.toLowerCase().includes(qLower) ||
-          inc.service.toLowerCase().includes(qLower) ||
-          inc.rootCauseDomain.toLowerCase().includes(qLower)
-      );
-    }
+      const allMems = await getAllHindsightMemories();
 
-    // --- Relevance gate: filter recalled items against query keywords ---
-    const queryKw = keywords(question);
-    const relevantMemories = allRecalledMemories.filter((m) =>
-      isMemoryRelevant(m, queryKw)
-    );
-    const relevantIncidents = allRecalledIncidents.filter((inc) =>
-      isIncidentRelevant(inc, queryKw)
-    );
+      // Sort: severity first, then most recent
+      relevantIncidents = [...allIncs]
+        .sort((a, b) => {
+          const sevDiff =
+            (SEVERITY_ORDER[a.severity.toLowerCase()] ?? 4) -
+            (SEVERITY_ORDER[b.severity.toLowerCase()] ?? 4);
+          if (sevDiff !== 0) return sevDiff;
+          // More recent first (compare timestamps if available)
+          const tA = a.occurredAt ? new Date(a.occurredAt).getTime() : 0;
+          const tB = b.occurredAt ? new Date(b.occurredAt).getTime() : 0;
+          return tB - tA;
+        })
+        .slice(0, 6);
 
-    // If nothing relevant was found, short-circuit here — do NOT call the LLM.
-    if (relevantMemories.length === 0 && relevantIncidents.length === 0) {
-      return NextResponse.json({
-        success: true,
-        answer: "I have no stored memory about that.",
-        citations: { memoryCodes: [], incidentCodes: [] },
-        dataSource: "Live Hindsight",
-        timestamp: new Date().toISOString(),
-      });
+      // Pick memories associated with those incidents, plus top by confidence
+      const incCodes = new Set(relevantIncidents.map((i) => i.code));
+      const associated = allMems.filter(
+        (m) => m.sourceIncidentCode && incCodes.has(m.sourceIncidentCode)
+      );
+      const byConfidence = [...allMems].sort(
+        (a, b) => (b.confidence ?? 0) - (a.confidence ?? 0)
+      );
+      // Merge: associated first, then top-confidence, deduplicate
+      const seen = new Set<string>();
+      for (const m of [...associated, ...byConfidence]) {
+        if (!seen.has(m.memoryCode)) {
+          seen.add(m.memoryCode);
+          relevantMemories.push(m);
+        }
+        if (relevantMemories.length >= 8) break;
+      }
+
+      console.log(
+        `[Ask API] Vague-question mode — providing ${relevantIncidents.length} incidents, ${relevantMemories.length} memories`
+      );
+    } else {
+      // --- Normal targeted recall ---
+      let allRecalledMemories: HindsightMemoryRecord[] = [];
+      let allRecalledIncidents: Incident[] = [];
+
+      try {
+        allRecalledMemories = await hindsightService.getRelevantMemories(question, 8);
+        const recallResults = await hindsightService.recallSimilarIncidents(question, 6);
+        allRecalledIncidents = recallResults.map((r) => r.incident);
+      } catch {
+        const allMems = await getAllHindsightMemories();
+        const allIncs = await getAllIncidents();
+        const qLower = question.toLowerCase();
+        allRecalledMemories = allMems.filter(
+          (m) =>
+            m.sourceIncident.toLowerCase().includes(qLower) ||
+            m.knowledgeDomain.toLowerCase().includes(qLower) ||
+            m.rootCause.toLowerCase().includes(qLower) ||
+            m.learnedInsight.toLowerCase().includes(qLower)
+        );
+        allRecalledIncidents = allIncs.filter(
+          (inc) =>
+            inc.title.toLowerCase().includes(qLower) ||
+            inc.service.toLowerCase().includes(qLower) ||
+            inc.rootCauseDomain.toLowerCase().includes(qLower)
+        );
+      }
+
+      // Apply keyword relevance threshold
+      const queryKw = keywords(question);
+      relevantMemories = allRecalledMemories.filter((m) =>
+        isMemoryRelevant(m, queryKw)
+      );
+      relevantIncidents = allRecalledIncidents.filter((inc) =>
+        isIncidentRelevant(inc, queryKw)
+      );
+
+      console.log(
+        `[Ask API] Targeted recall — queryKw=[${[...queryKw].join(",")}] memories=${relevantMemories.length}/${allRecalledMemories.length} incidents=${relevantIncidents.length}/${allRecalledIncidents.length}`
+      );
+
+      // Nothing relevant and NOT a vague question → truly unrelated
+      if (relevantMemories.length === 0 && relevantIncidents.length === 0) {
+        return NextResponse.json({
+          success: true,
+          answer: "I have no stored memory about that.",
+          citations: { memoryCodes: [], incidentCodes: [] },
+          dataSource: "Live Hindsight",
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
 
     // --- Build context bundle ---
@@ -247,12 +332,17 @@ export async function POST(req: NextRequest) {
       )
       .join("\n\n");
 
+    // System prompt varies slightly for vague vs targeted questions
+    const vagueInstruction = vagueMode
+      ? "\nThe user asked a general browsing question about past failures. Summarize the most notable incidents from the context below, mentioning each incident's code, service, severity, and what was learned. Compare outcomes where relevant."
+      : "";
+
     const systemPrompt = `You are the Resonyx Failure Intelligence Assistant.
 Answer ONLY from the memory records and incidents provided below. Do NOT invent facts.
 When you cite a memory or incident, use its code exactly as given (e.g. MEM-2001, INC-2017).
 If the provided context does not contain enough information to answer, reply exactly:
 I have no stored memory about that.
-Keep answers factual, concise, and comparative where the question asks for comparison.
+Keep answers factual, concise, and comparative where the question asks for comparison.${vagueInstruction}
 
 === HINDSIGHT MEMORIES ===
 ${memoriesContext}
@@ -265,7 +355,6 @@ ${incidentsContext}`;
     const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
 
     if (!apiKey || !apiKey.trim()) {
-      // No key configured — return a clear error, not a fake answer
       return NextResponse.json(
         {
           success: false,
@@ -302,7 +391,6 @@ ${incidentsContext}`;
       });
 
       if (!response.ok) {
-        // Parse error body — OpenRouter returns JSON with an `error.message` field
         const rawBody = await response.text().catch(() => "");
         let upstreamMessage = rawBody;
         try {
@@ -312,12 +400,10 @@ ${incidentsContext}`;
           // keep rawBody as-is
         }
 
-        // Log status + model + upstream reason. NEVER log the API key.
         console.error(
           `[Ask API] OpenRouter error — status=${response.status} model=${model} reason=${upstreamMessage}`
         );
 
-        // Give the client a clear, actionable message for common status codes.
         let clientError: string;
         if (response.status === 404) {
           clientError = `Model unavailable (${model}). Check the OPENROUTER_MODEL environment variable or use the default anthropic/claude-3.5-sonnet.`;
