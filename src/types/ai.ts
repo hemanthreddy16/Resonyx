@@ -1,13 +1,16 @@
-export type AllowedRecoveryActionType =
-  | "retry_request"
-  | "restart_service"
-  | "clear_cache"
-  | "rollback_deployment"
-  | "disable_feature"
-  | "escalate_to_human"
-  | "isolate_bulkhead"
-  | "apply_rate_limit"
-  | "cancel_blocking_query";
+export const ALLOWED_RECOVERY_ACTIONS = [
+  "retry_request",
+  "restart_service",
+  "clear_cache",
+  "rollback_deployment",
+  "disable_feature",
+  "escalate_to_human",
+  "isolate_bulkhead",
+  "apply_rate_limit",
+  "cancel_blocking_query",
+] as const;
+
+export type AllowedRecoveryActionType = (typeof ALLOWED_RECOVERY_ACTIONS)[number];
 
 export interface AIDiagnosisResult {
   diagnosis: string;

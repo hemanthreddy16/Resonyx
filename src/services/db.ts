@@ -6,8 +6,10 @@ import {
   VerificationRecord,
   AuditLogRecord,
   AllowedRecoveryActionType,
+  HindsightMemoryRecord,
 } from "@/types";
 import { MOCK_INCIDENTS } from "@/data/mockIncidents";
+import { MOCK_HINDSIGHT_MEMORIES } from "@/data/mockHindsightMemory";
 
 /**
  * ==============================================================================
@@ -15,53 +17,57 @@ import { MOCK_INCIDENTS } from "@/data/mockIncidents";
  * ==============================================================================
  *
  * Provides connection pooling, automatic schema creation, transactional safety,
- * and robust graceful fallback to high-fidelity mock data if DATABASE_URL is not
- * configured or currently offline.
+ * and robust graceful fallback to mock data if DATABASE_URL is not configured.
+ * ==============================================================================
  */
 
 let pool: Pool | null = null;
 let isSchemaInitialized = false;
-let dbConnectionFailed = false;
 
-// In-memory fallback stores when DB is offline or in demo mode
+// In-memory fallback stores when DB is offline or in development mode without DB
 const memoryStore = {
   incidents: new Map<string, Incident>(),
   diagnoses: new Map<string, AIDiagnosisResult & { id: string; incidentId: string; createdAt: string }>(),
   actionExecutions: new Map<string, ActionExecutionRecord>(),
   verifications: new Map<string, VerificationRecord>(),
   auditLogs: [] as AuditLogRecord[],
+  hindsightMemories: new Map<string, HindsightMemoryRecord>(),
 };
 
-// Pre-seed memory store with mock incidents
+// Pre-seed memory store with mock incidents & memories for fallback
 MOCK_INCIDENTS.forEach((inc) => {
   memoryStore.incidents.set(inc.id, inc);
   memoryStore.incidents.set(inc.code.toLowerCase(), inc);
 });
 
+MOCK_HINDSIGHT_MEMORIES.forEach((m) => {
+  memoryStore.hindsightMemories.set(m.id, m);
+  memoryStore.hindsightMemories.set(m.memoryCode.toLowerCase(), m);
+});
+
 export function getDbPool(): Pool | null {
   const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl || dbUrl.trim() === "" || dbUrl.includes("localhost:5432/resonyx_prod") && dbConnectionFailed) {
+  if (!dbUrl || dbUrl.trim() === "") {
     return null;
   }
 
   if (!pool) {
     try {
+      const isLocal = dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1");
       pool = new Pool({
         connectionString: dbUrl,
-        ssl: dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1") ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000,
+        ssl: isLocal ? false : { rejectUnauthorized: false },
+        connectionTimeoutMillis: 10000,
         max: 10,
         idleTimeoutMillis: 30000,
       });
 
       pool.on("error", (err) => {
-        console.warn("[PostgreSQL] Unexpected pool client error (falling back to memory):", err.message);
-        dbConnectionFailed = true;
+        console.error("[PostgreSQL] Unexpected pool client error:", err.message);
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] Pool initialization failed:", msg);
-      dbConnectionFailed = true;
+      console.error("[PostgreSQL] Pool initialization failed:", msg);
       pool = null;
     }
   }
@@ -81,15 +87,73 @@ export async function isDatabaseConnected(): Promise<boolean> {
     } finally {
       client.release();
     }
-  } catch {
-    dbConnectionFailed = true;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[PostgreSQL] Connection check failed:", msg);
     return false;
   }
 }
 
 /**
+ * Returns full health and table metrics for /api/health
+ */
+export async function getDatabaseHealth(): Promise<{
+  connected: boolean;
+  dialect: string;
+  tableCount: number;
+  incidentCount: number;
+  memoryCount: number;
+  error?: string;
+}> {
+  const p = getDbPool();
+  if (!p) {
+    return {
+      connected: false,
+      dialect: "in-memory-fallback",
+      tableCount: 0,
+      incidentCount: memoryStore.incidents.size,
+      memoryCount: memoryStore.hindsightMemories.size,
+      error: "DATABASE_URL environment variable is not configured.",
+    };
+  }
+
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    const tablesRes = await client.query(`
+      SELECT COUNT(*) as count
+      FROM information_schema.tables
+      WHERE table_schema = 'public';
+    `);
+    const tableCount = parseInt(tablesRes.rows[0]?.count || "0", 10);
+
+    const incRes = await client.query("SELECT COUNT(*) as count FROM incidents;").catch(() => ({ rows: [{ count: "0" }] }));
+    const memRes = await client.query("SELECT COUNT(*) as count FROM hindsight_memories;").catch(() => ({ rows: [{ count: "0" }] }));
+
+    return {
+      connected: true,
+      dialect: "postgresql",
+      tableCount,
+      incidentCount: parseInt(incRes.rows[0]?.count || "0", 10),
+      memoryCount: parseInt(memRes.rows[0]?.count || "0", 10),
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      connected: false,
+      dialect: "postgresql",
+      tableCount: 0,
+      incidentCount: memoryStore.incidents.size,
+      memoryCount: memoryStore.hindsightMemories.size,
+      error: msg,
+    };
+  } finally {
+    if (client) client.release();
+  }
+}
+
+/**
  * Initializes the full Resonyx PostgreSQL database schema.
- * Creates tables: users, incidents, diagnoses, recovery_actions, action_executions, verifications, audit_logs
  */
 export async function initDbSchema(): Promise<boolean> {
   if (isSchemaInitialized) return true;
@@ -101,17 +165,15 @@ export async function initDbSchema(): Promise<boolean> {
     client = await p.connect();
 
     const ddl = `
-      -- 1. Users Table
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(64) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
         name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
         role VARCHAR(64) DEFAULT 'sre_engineer',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 2. Incidents Table
       CREATE TABLE IF NOT EXISTS incidents (
         id VARCHAR(64) PRIMARY KEY,
         code VARCHAR(64) UNIQUE NOT NULL,
@@ -127,22 +189,27 @@ export async function initDbSchema(): Promise<boolean> {
         impact_cost NUMERIC DEFAULT 0,
         affected_users INTEGER DEFAULT 0,
         root_cause_domain VARCHAR(128),
+        pattern_match JSONB DEFAULT '{}',
+        risk_level VARCHAR(32) DEFAULT 'medium',
         hindsight_vector_id VARCHAR(128),
+        similarity_match_count INTEGER DEFAULT 0,
         summary TEXT,
         telemetry_metrics JSONB DEFAULT '{}',
         timeline_events JSONB DEFAULT '[]',
+        ai_root_cause JSONB DEFAULT '{}',
+        hindsight_recall JSONB DEFAULT '[]',
         evidence JSONB DEFAULT '{}',
-        key_learnings JSONB DEFAULT '[]',
-        preventative_measures JSONB DEFAULT '[]',
-        tags JSONB DEFAULT '[]',
+        key_learnings TEXT DEFAULT '',
+        preventative_measures TEXT DEFAULT '',
+        tags TEXT DEFAULT '',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 3. Diagnoses Table
       CREATE TABLE IF NOT EXISTS diagnoses (
         id VARCHAR(64) PRIMARY KEY,
         incident_id VARCHAR(64) REFERENCES incidents(id) ON DELETE CASCADE,
+        model VARCHAR(128) NOT NULL,
         diagnosis TEXT NOT NULL,
         root_cause TEXT NOT NULL,
         confidence NUMERIC NOT NULL,
@@ -151,22 +218,20 @@ export async function initDbSchema(): Promise<boolean> {
         recommended_actions JSONB DEFAULT '[]',
         reasoning TEXT,
         required_information JSONB DEFAULT '[]',
-        raw_ai_response TEXT,
+        raw_response TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 4. Controlled Recovery Actions Whitelist Table
       CREATE TABLE IF NOT EXISTS recovery_actions (
         id VARCHAR(64) PRIMARY KEY,
-        name VARCHAR(64) UNIQUE NOT NULL,
+        action_type VARCHAR(64) UNIQUE NOT NULL,
         description TEXT NOT NULL,
-        risk_level VARCHAR(32) NOT NULL,
-        is_automated BOOLEAN DEFAULT TRUE,
+        risk_tier VARCHAR(32) DEFAULT 'low',
+        is_whitelisted BOOLEAN DEFAULT TRUE,
         requires_human_approval BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 5. Action Executions Table
       CREATE TABLE IF NOT EXISTS action_executions (
         id VARCHAR(64) PRIMARY KEY,
         incident_id VARCHAR(64) REFERENCES incidents(id) ON DELETE CASCADE,
@@ -179,7 +244,6 @@ export async function initDbSchema(): Promise<boolean> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 6. Verifications Table
       CREATE TABLE IF NOT EXISTS verifications (
         id VARCHAR(64) PRIMARY KEY,
         incident_id VARCHAR(64) REFERENCES incidents(id) ON DELETE CASCADE,
@@ -187,10 +251,10 @@ export async function initDbSchema(): Promise<boolean> {
         verification_status VARCHAR(64) NOT NULL,
         verification_result TEXT NOT NULL,
         metrics JSONB DEFAULT '{}',
+        is_resolved BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- 7. Audit Logs Table
       CREATE TABLE IF NOT EXISTS audit_logs (
         id VARCHAR(64) PRIMARY KEY,
         incident_id VARCHAR(64) REFERENCES incidents(id) ON DELETE SET NULL,
@@ -200,27 +264,66 @@ export async function initDbSchema(): Promise<boolean> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      -- Pre-populate default permitted actions if empty
-      INSERT INTO recovery_actions (id, name, description, risk_level, is_automated, requires_human_approval)
+      CREATE TABLE IF NOT EXISTS hindsight_memories (
+        id VARCHAR(64) PRIMARY KEY,
+        memory_code VARCHAR(64) UNIQUE NOT NULL,
+        source_incident_id VARCHAR(64) REFERENCES incidents(id) ON DELETE SET NULL,
+        source_incident_code VARCHAR(64),
+        title VARCHAR(255) NOT NULL,
+        vector_id VARCHAR(128) NOT NULL,
+        knowledge_domain VARCHAR(128) NOT NULL,
+        root_cause VARCHAR(255) NOT NULL,
+        decision TEXT NOT NULL,
+        action VARCHAR(128) NOT NULL,
+        outcome VARCHAR(64) NOT NULL,
+        outcome_detail TEXT NOT NULL,
+        learned_insight TEXT NOT NULL,
+        extracted_rule TEXT NOT NULL,
+        anti_pattern_signature TEXT NOT NULL,
+        pattern_code VARCHAR(64) NOT NULL,
+        confidence_score NUMERIC DEFAULT 90.0,
+        similarity_threshold NUMERIC DEFAULT 85.0,
+        semantic_tags JSONB DEFAULT '[]',
+        raw_payload JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_incidents_code ON incidents(code);
+      CREATE INDEX IF NOT EXISTS idx_incidents_occurred_at ON incidents(occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+      CREATE INDEX IF NOT EXISTS idx_incidents_service ON incidents(service);
+      CREATE INDEX IF NOT EXISTS idx_diagnoses_incident_id ON diagnoses(incident_id);
+      CREATE INDEX IF NOT EXISTS idx_action_executions_incident_id ON action_executions(incident_id);
+      CREATE INDEX IF NOT EXISTS idx_verifications_incident_id ON verifications(incident_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_incident_id ON audit_logs(incident_id);
+      CREATE INDEX IF NOT EXISTS idx_hindsight_memories_code ON hindsight_memories(memory_code);
+      CREATE INDEX IF NOT EXISTS idx_hindsight_memories_domain ON hindsight_memories(knowledge_domain);
+
+      INSERT INTO recovery_actions (id, action_type, description, risk_tier, is_whitelisted)
       VALUES
-        ('act-01', 'retry_request', 'Execute controlled retry with exponential randomized backoff jitter.', 'low', true, false),
-        ('act-02', 'restart_service', 'Perform graceful rolling restart of stateless application pods.', 'medium', true, false),
-        ('act-03', 'clear_cache', 'Evict corrupted or volatile Redis cache keys for specific namespaces.', 'low', true, false),
-        ('act-04', 'rollback_deployment', 'Roll back active canary or service deployment to prior verified SHA.', 'high', true, false),
-        ('act-05', 'disable_feature', 'Toggle LaunchDarkly / Unleash feature flag to bypass failing code paths.', 'medium', true, false),
-        ('act-06', 'escalate_to_human', 'Page tier-3 on-call SRE and dispatch incident alert payload to Slack/Teams.', 'low', true, false),
-        ('act-07', 'isolate_bulkhead', 'Enforce client bulkhead threadpool isolation to shed 25% non-critical queue volume.', 'medium', true, false),
-        ('act-08', 'apply_rate_limit', 'Temporarily throttle inbound RPS on saturated gateway routes.', 'medium', true, false),
-        ('act-09', 'cancel_blocking_query', 'Cancel long-running transactional lock holders exceeding threshold.', 'high', true, false)
-      ON CONFLICT (name) DO NOTHING;
+        ('act-01', 'retry_request', 'Execute controlled retry with exponential randomized backoff jitter.', 'low', true),
+        ('act-02', 'restart_service', 'Perform graceful rolling restart of stateless application pods.', 'medium', true),
+        ('act-03', 'clear_cache', 'Evict corrupted or volatile Redis cache keys for specific namespaces.', 'low', true),
+        ('act-04', 'rollback_deployment', 'Roll back active canary or service deployment to prior verified SHA.', 'high', true),
+        ('act-05', 'disable_feature', 'Toggle LaunchDarkly / Unleash feature flag to bypass failing code paths.', 'medium', true),
+        ('act-06', 'escalate_to_human', 'Page tier-3 on-call SRE and dispatch incident alert payload to Slack/Teams.', 'low', true),
+        ('act-07', 'isolate_bulkhead', 'Enforce client bulkhead threadpool isolation to shed 25% non-critical queue volume.', 'medium', true),
+        ('act-08', 'apply_rate_limit', 'Temporarily throttle inbound RPS on saturated gateway routes.', 'medium', true),
+        ('act-09', 'cancel_blocking_query', 'Cancel long-running transactional lock holders exceeding threshold.', 'high', true)
+      ON CONFLICT (action_type) DO UPDATE SET
+        description = EXCLUDED.description,
+        risk_tier = EXCLUDED.risk_tier,
+        is_whitelisted = EXCLUDED.is_whitelisted;
     `;
 
     await client.query(ddl);
     isSchemaInitialized = true;
+    console.log("[PostgreSQL] Schema verification / initialization complete.");
     return true;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[PostgreSQL] Schema initialization warning (falling back to memory):", msg);
+    console.error("[PostgreSQL] Schema initialization error:", msg);
     return false;
   } finally {
     if (client) client.release();
@@ -228,12 +331,12 @@ export async function initDbSchema(): Promise<boolean> {
 }
 
 // -----------------------------------------------------------------------------
-// REPOSITORY METHODS (Dual-mode: Real PostgreSQL with Memory Store fallback)
+// REPOSITORY METHODS
 // -----------------------------------------------------------------------------
 
 export async function insertIncident(incident: Incident): Promise<Incident> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
@@ -243,9 +346,10 @@ export async function insertIncident(incident: Incident): Promise<Incident> {
           id, code, title, service, environment, severity, status,
           detected_time, occurred_at, resolved_at, mttr_minutes, impact_cost,
           affected_users, root_cause_domain, hindsight_vector_id, summary,
-          telemetry_metrics, timeline_events, evidence, key_learnings, preventative_measures, tags
+          telemetry_metrics, timeline_events, evidence, key_learnings, preventative_measures, tags,
+          pattern_match, risk_level, similarity_match_count
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
         )
         ON CONFLICT (id) DO UPDATE SET
           status = EXCLUDED.status,
@@ -273,21 +377,27 @@ export async function insertIncident(incident: Incident): Promise<Incident> {
         JSON.stringify(incident.evidence || {}),
         JSON.stringify(incident.timelineEvents || []),
         JSON.stringify(incident.evidence || {}),
-        JSON.stringify(incident.keyLearnings || []),
-        JSON.stringify(incident.preventativeMeasures || []),
-        JSON.stringify(incident.tags || []),
+        Array.isArray(incident.keyLearnings) ? incident.keyLearnings.join("; ") : (incident.keyLearnings || ""),
+        Array.isArray(incident.preventativeMeasures) ? incident.preventativeMeasures.join("; ") : (incident.preventativeMeasures || ""),
+        Array.isArray(incident.tags) ? incident.tags.join(" ") : (incident.tags || ""),
+        JSON.stringify(incident.patternMatch || {}),
+        incident.riskLevel || "medium",
+        incident.similarityMatchCount || 4,
       ];
 
       await client.query(query, values);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] insertIncident fallback:", msg);
+      console.error("[PostgreSQL] Error in insertIncident:", msg);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(`Database insertIncident failed in production: ${msg}`);
+      }
     } finally {
       if (client) client.release();
     }
   }
 
-  // Always update memory store as fallback
+  // Also update memoryStore
   memoryStore.incidents.set(incident.id, incident);
   memoryStore.incidents.set(incident.code.toLowerCase(), incident);
 
@@ -305,7 +415,7 @@ export async function insertIncident(incident: Incident): Promise<Incident> {
 
 export async function getAllIncidents(): Promise<Incident[]> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
@@ -328,44 +438,46 @@ export async function getAllIncidents(): Promise<Incident[]> {
           affectedUsers: Number(row.affected_users) || 0,
           rootCauseDomain: row.root_cause_domain,
           hindsightVectorId: row.hindsight_vector_id || "vec_default",
-          similarityMatchCount: 4,
+          similarityMatchCount: row.similarity_match_count || 4,
           summary: row.summary,
           timelineEvents: row.timeline_events || [],
-          aiRootCause: {
+          aiRootCause: row.ai_root_cause || {
             likelyCause: row.summary || "Pending investigation",
             confidence: 90,
           },
-          hindsightRecall: [],
+          hindsightRecall: row.hindsight_recall || [],
           evidence: row.evidence || {},
-          keyLearnings: row.key_learnings || [],
-          preventativeMeasures: row.preventative_measures || [],
-          tags: row.tags || [],
-          riskLevel: row.severity,
+          keyLearnings: row.key_learnings || "",
+          preventativeMeasures: row.preventative_measures || "",
+          tags: row.tags || "",
+          riskLevel: row.risk_level || row.severity,
+          patternMatch: row.pattern_match || undefined,
         }));
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getAllIncidents fallback:", msg);
+      console.error("[PostgreSQL] Error in getAllIncidents:", msg);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(`Database getAllIncidents failed: ${msg}`);
+      }
     } finally {
       if (client) client.release();
     }
   }
 
-  // Memory fallback
-  return Array.from(new Set(Array.from(memoryStore.incidents.values())));
+  return Array.from(new Set(memoryStore.incidents.values()));
 }
 
-export async function getIncidentById(id: string): Promise<Incident | undefined> {
-  const normalized = id.toLowerCase();
+export async function getIncidentById(idOrCode: string): Promise<Incident | undefined> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
       client = await p.connect();
       const res = await client.query(
-        "SELECT * FROM incidents WHERE LOWER(id) = $1 OR LOWER(code) = $1 LIMIT 1;",
-        [normalized]
+        "SELECT * FROM incidents WHERE LOWER(id) = LOWER($1) OR LOWER(code) = LOWER($1) LIMIT 1;",
+        [idOrCode]
       );
       if (res.rows && res.rows.length > 0) {
         const row = res.rows[0];
@@ -385,82 +497,92 @@ export async function getIncidentById(id: string): Promise<Incident | undefined>
           affectedUsers: Number(row.affected_users) || 0,
           rootCauseDomain: row.root_cause_domain,
           hindsightVectorId: row.hindsight_vector_id || "vec_default",
-          similarityMatchCount: 4,
+          similarityMatchCount: row.similarity_match_count || 4,
           summary: row.summary,
           timelineEvents: row.timeline_events || [],
-          aiRootCause: {
+          aiRootCause: row.ai_root_cause || {
             likelyCause: row.summary || "Pending investigation",
-            confidence: 92,
+            confidence: 90,
           },
-          hindsightRecall: [],
+          hindsightRecall: row.hindsight_recall || [],
           evidence: row.evidence || {},
-          keyLearnings: row.key_learnings || [],
-          preventativeMeasures: row.preventative_measures || [],
-          tags: row.tags || [],
-          riskLevel: row.severity,
+          keyLearnings: row.key_learnings || "",
+          preventativeMeasures: row.preventative_measures || "",
+          tags: row.tags || "",
+          riskLevel: row.risk_level || row.severity,
+          patternMatch: row.pattern_match || undefined,
         };
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getIncidentById fallback:", msg);
+      console.error("[PostgreSQL] Error in getIncidentById:", msg);
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(`Database getIncidentById failed: ${msg}`);
+      }
     } finally {
       if (client) client.release();
     }
   }
 
-  return memoryStore.incidents.get(id) || memoryStore.incidents.get(normalized);
+  return (
+    memoryStore.incidents.get(idOrCode) ||
+    memoryStore.incidents.get(idOrCode.toLowerCase())
+  );
 }
 
 export async function updateIncidentStatus(
-  id: string,
-  status: "investigating" | "mitigated" | "resolved" | "learning-indexed",
+  idOrCode: string,
+  status: string,
   resolvedAt?: string
 ): Promise<boolean> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
+      await initDbSchema();
       client = await p.connect();
-      await client.query(
-        "UPDATE incidents SET status = $1, resolved_at = $2, updated_at = NOW() WHERE LOWER(id) = LOWER($3) OR LOWER(code) = LOWER($3);",
-        [status, resolvedAt || new Date().toISOString(), id]
-      );
+      const query = `
+        UPDATE incidents
+        SET status = $1,
+            resolved_at = CASE WHEN $2::TIMESTAMPTZ IS NOT NULL THEN $2::TIMESTAMPTZ ELSE resolved_at END,
+            updated_at = NOW()
+        WHERE LOWER(id) = LOWER($3) OR LOWER(code) = LOWER($3);
+      `;
+      await client.query(query, [status, resolvedAt || null, idOrCode]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] updateIncidentStatus fallback:", msg);
+      console.error("[PostgreSQL] Error in updateIncidentStatus:", msg);
     } finally {
       if (client) client.release();
     }
   }
 
-  const existing = memoryStore.incidents.get(id) || memoryStore.incidents.get(id.toLowerCase());
-  if (existing) {
-    existing.status = status;
-    if (resolvedAt) existing.resolvedAt = resolvedAt;
+  const inc = memoryStore.incidents.get(idOrCode) || memoryStore.incidents.get(idOrCode.toLowerCase());
+  if (inc) {
+    inc.status = status as Incident["status"];
+    if (resolvedAt) inc.resolvedAt = resolvedAt;
   }
   return true;
 }
 
-export async function insertDiagnosis(
-  incidentId: string,
-  diag: AIDiagnosisResult
-): Promise<string> {
+export async function insertDiagnosis(incidentId: string, diag: AIDiagnosisResult): Promise<string> {
   const diagnosisId = `diag-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
       client = await p.connect();
       const query = `
         INSERT INTO diagnoses (
-          id, incident_id, diagnosis, root_cause, confidence, severity,
-          contributing_factors, recommended_actions, reasoning, required_information, raw_ai_response
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+          id, incident_id, model, diagnosis, root_cause, confidence, severity,
+          contributing_factors, recommended_actions, reasoning, required_information, raw_response
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
       `;
       await client.query(query, [
         diagnosisId,
         incidentId,
+        process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
         diag.diagnosis,
         diag.rootCause,
         diag.confidence,
@@ -473,7 +595,7 @@ export async function insertDiagnosis(
       ]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] insertDiagnosis fallback:", msg);
+      console.error("[PostgreSQL] Error in insertDiagnosis:", msg);
     } finally {
       if (client) client.release();
     }
@@ -500,9 +622,10 @@ export async function insertDiagnosis(
 
 export async function getDiagnosisForIncident(incidentId: string): Promise<AIDiagnosisResult | null> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
+      await initDbSchema();
       client = await p.connect();
       const res = await client.query(
         "SELECT * FROM diagnoses WHERE LOWER(incident_id) = LOWER($1) ORDER BY created_at DESC LIMIT 1;",
@@ -523,7 +646,7 @@ export async function getDiagnosisForIncident(incidentId: string): Promise<AIDia
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getDiagnosisForIncident fallback:", msg);
+      console.error("[PostgreSQL] Error in getDiagnosisForIncident:", msg);
     } finally {
       if (client) client.release();
     }
@@ -534,7 +657,7 @@ export async function getDiagnosisForIncident(incidentId: string): Promise<AIDia
 
 export async function insertActionExecution(exec: ActionExecutionRecord): Promise<void> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
@@ -556,7 +679,7 @@ export async function insertActionExecution(exec: ActionExecutionRecord): Promis
       ]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] insertActionExecution fallback:", msg);
+      console.error("[PostgreSQL] Error in insertActionExecution:", msg);
     } finally {
       if (client) client.release();
     }
@@ -576,9 +699,10 @@ export async function insertActionExecution(exec: ActionExecutionRecord): Promis
 
 export async function getExecutionsForIncident(incidentId: string): Promise<ActionExecutionRecord[]> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
+      await initDbSchema();
       client = await p.connect();
       const res = await client.query(
         "SELECT * FROM action_executions WHERE LOWER(incident_id) = LOWER($1) ORDER BY created_at DESC;",
@@ -599,7 +723,7 @@ export async function getExecutionsForIncident(incidentId: string): Promise<Acti
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getExecutionsForIncident fallback:", msg);
+      console.error("[PostgreSQL] Error in getExecutionsForIncident:", msg);
     } finally {
       if (client) client.release();
     }
@@ -612,15 +736,15 @@ export async function getExecutionsForIncident(incidentId: string): Promise<Acti
 
 export async function insertVerification(ver: VerificationRecord): Promise<void> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
       client = await p.connect();
       const query = `
         INSERT INTO verifications (
-          id, incident_id, action_execution_id, verification_status, verification_result, metrics
-        ) VALUES ($1, $2, $3, $4, $5, $6);
+          id, incident_id, action_execution_id, verification_status, verification_result, metrics, is_resolved
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7);
       `;
       await client.query(query, [
         ver.id,
@@ -629,10 +753,11 @@ export async function insertVerification(ver: VerificationRecord): Promise<void>
         ver.verificationStatus,
         ver.verificationResult,
         JSON.stringify(ver.metrics),
+        ver.verificationStatus === "verified_resolved",
       ]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] insertVerification fallback:", msg);
+      console.error("[PostgreSQL] Error in insertVerification:", msg);
     } finally {
       if (client) client.release();
     }
@@ -652,9 +777,10 @@ export async function insertVerification(ver: VerificationRecord): Promise<void>
 
 export async function getVerificationsForIncident(incidentId: string): Promise<VerificationRecord[]> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
+      await initDbSchema();
       client = await p.connect();
       const res = await client.query(
         "SELECT * FROM verifications WHERE LOWER(incident_id) = LOWER($1) ORDER BY created_at DESC;",
@@ -673,7 +799,7 @@ export async function getVerificationsForIncident(incidentId: string): Promise<V
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getVerificationsForIncident fallback:", msg);
+      console.error("[PostgreSQL] Error in getVerificationsForIncident:", msg);
     } finally {
       if (client) client.release();
     }
@@ -686,7 +812,7 @@ export async function getVerificationsForIncident(incidentId: string): Promise<V
 
 export async function insertAuditLog(log: AuditLogRecord): Promise<void> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
       await initDbSchema();
@@ -697,7 +823,7 @@ export async function insertAuditLog(log: AuditLogRecord): Promise<void> {
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] insertAuditLog fallback:", msg);
+      console.error("[PostgreSQL] Error in insertAuditLog:", msg);
     } finally {
       if (client) client.release();
     }
@@ -711,9 +837,10 @@ export async function insertAuditLog(log: AuditLogRecord): Promise<void> {
 
 export async function getAuditLogsForIncident(incidentId?: string): Promise<AuditLogRecord[]> {
   const p = getDbPool();
-  if (p && !dbConnectionFailed) {
+  if (p) {
     let client: PoolClient | null = null;
     try {
+      await initDbSchema();
       client = await p.connect();
       const query = incidentId
         ? "SELECT * FROM audit_logs WHERE LOWER(incident_id) = LOWER($1) ORDER BY created_at DESC LIMIT 50;"
@@ -732,7 +859,7 @@ export async function getAuditLogsForIncident(incidentId?: string): Promise<Audi
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[PostgreSQL] getAuditLogs fallback:", msg);
+      console.error("[PostgreSQL] Error in getAuditLogs:", msg);
     } finally {
       if (client) client.release();
     }
@@ -745,3 +872,280 @@ export async function getAuditLogsForIncident(incidentId?: string): Promise<Audi
   }
   return memoryStore.auditLogs;
 }
+
+// -----------------------------------------------------------------------------
+// HINDSIGHT MEMORIES PERSISTENCE IN POSTGRESQL
+// -----------------------------------------------------------------------------
+
+export async function insertHindsightMemory(record: HindsightMemoryRecord): Promise<void> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+      const query = `
+        INSERT INTO hindsight_memories (
+          id, memory_code, source_incident_code, title, vector_id,
+          knowledge_domain, root_cause, decision, action, outcome,
+          outcome_detail, learned_insight, extracted_rule, anti_pattern_signature,
+          pattern_code, confidence_score, semantic_tags
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+        )
+        ON CONFLICT (memory_code) DO UPDATE SET
+          outcome = EXCLUDED.outcome,
+          outcome_detail = EXCLUDED.outcome_detail,
+          learned_insight = EXCLUDED.learned_insight,
+          confidence_score = EXCLUDED.confidence_score,
+          updated_at = NOW();
+      `;
+      await client.query(query, [
+        record.id,
+        record.memoryCode,
+        record.sourceIncidentCode,
+        record.sourceIncident,
+        record.vectorId,
+        record.knowledgeDomain,
+        record.rootCause,
+        record.decision,
+        record.action,
+        record.outcome,
+        record.outcomeDetail,
+        record.learnedInsight,
+        record.extractedRule,
+        record.antiPatternSignature,
+        record.patternCode,
+        record.confidence,
+        JSON.stringify(record.semanticTags || []),
+      ]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in insertHindsightMemory:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  memoryStore.hindsightMemories.set(record.id, record);
+  memoryStore.hindsightMemories.set(record.memoryCode.toLowerCase(), record);
+}
+
+export async function searchHindsightMemories(query: string, limit: number = 5): Promise<HindsightMemoryRecord[]> {
+  const words = query.toLowerCase().split(/[\s,._-]+/).filter((w) => w.length >= 3);
+  const patterns = words.map((w) => `%${w}%`);
+
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+
+      let res;
+      if (patterns.length > 0) {
+        res = await client.query(
+          `SELECT * FROM hindsight_memories
+           WHERE LOWER(learned_insight) LIKE ANY($1)
+              OR LOWER(extracted_rule) LIKE ANY($1)
+              OR LOWER(root_cause) LIKE ANY($1)
+              OR LOWER(title) LIKE ANY($1)
+              OR LOWER(knowledge_domain) LIKE ANY($1)
+              OR LOWER(pattern_code) LIKE ANY($1)
+           ORDER BY confidence_score DESC
+           LIMIT $2;`,
+          [patterns, limit]
+        );
+      }
+
+      if (!res || res.rows.length === 0) {
+        res = await client.query(
+          `SELECT * FROM hindsight_memories
+           ORDER BY confidence_score DESC
+           LIMIT $1;`,
+          [limit]
+        );
+      }
+
+      if (res.rows && res.rows.length > 0) {
+        return res.rows.map((r) => ({
+          id: r.id,
+          memoryCode: r.memory_code,
+          sourceIncident: r.title,
+          sourceIncidentCode: r.source_incident_code,
+          vectorId: r.vector_id,
+          knowledgeDomain: r.knowledge_domain,
+          context: [],
+          action: r.action,
+          outcome: r.outcome,
+          outcomeDetail: r.outcome_detail,
+          learnedInsight: r.learned_insight,
+          rootCause: r.root_cause,
+          decision: r.decision,
+          patternCode: r.pattern_code,
+          confidence: Number(r.confidence_score),
+          relatedMemories: [],
+          extractedRule: r.extracted_rule,
+          antiPatternSignature: r.anti_pattern_signature,
+          failureMechanism: r.root_cause,
+          semanticTags: r.semantic_tags || [],
+          recallCount: 4,
+          lastRecalledAt: new Date(r.updated_at || r.created_at).toISOString(),
+          indexingDate: new Date(r.created_at).toISOString(),
+        }));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in searchHindsightMemories:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  const all = Array.from(new Set(memoryStore.hindsightMemories.values()));
+  const matches = all.filter((m) => {
+    if (words.length === 0) return true;
+    const text = `${m.extractedRule} ${m.learnedInsight} ${m.rootCause} ${m.sourceIncident} ${m.knowledgeDomain} ${m.patternCode}`.toLowerCase();
+    return words.some((w) => text.includes(w));
+  });
+  return (matches.length > 0 ? matches : all).slice(0, limit);
+}
+
+export async function updateHindsightMemoryOutcome(
+  memoryIdOrCode: string,
+  outcome: string,
+  details?: string
+): Promise<boolean> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+      await client.query(
+        `UPDATE hindsight_memories
+         SET outcome = $1, outcome_detail = COALESCE($2, outcome_detail), updated_at = NOW()
+         WHERE LOWER(id) = LOWER($3) OR LOWER(memory_code) = LOWER($3);`,
+        [outcome, details || null, memoryIdOrCode]
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in updateHindsightMemoryOutcome:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  const mem = memoryStore.hindsightMemories.get(memoryIdOrCode) || memoryStore.hindsightMemories.get(memoryIdOrCode.toLowerCase());
+  if (mem) {
+    mem.outcome = outcome as HindsightMemoryRecord["outcome"];
+    if (details) mem.outcomeDetail = details;
+  }
+  return true;
+}
+
+export async function updateHindsightLearning(
+  memoryIdOrCode: string,
+  newInsight: string,
+  confidenceDelta: number = 0.8
+): Promise<boolean> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+      await client.query(
+        `UPDATE hindsight_memories
+         SET learned_insight = $1,
+             confidence_score = LEAST(99.8, confidence_score + $2),
+             updated_at = NOW()
+         WHERE LOWER(id) = LOWER($3) OR LOWER(memory_code) = LOWER($3);`,
+        [newInsight, confidenceDelta, memoryIdOrCode]
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in updateHindsightLearning:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  const mem = memoryStore.hindsightMemories.get(memoryIdOrCode) || memoryStore.hindsightMemories.get(memoryIdOrCode.toLowerCase());
+  if (mem) {
+    mem.learnedInsight = newInsight;
+    mem.confidence = Math.min(99.8, mem.confidence + confidenceDelta);
+  }
+  return true;
+}
+
+export async function getAllHindsightMemories(): Promise<HindsightMemoryRecord[]> {
+  const p = getDbPool();
+  if (p) {
+    let client: PoolClient | null = null;
+    try {
+      await initDbSchema();
+      client = await p.connect();
+      const res = await client.query("SELECT * FROM hindsight_memories ORDER BY confidence_score DESC LIMIT 50;");
+      if (res.rows && res.rows.length > 0) {
+        return res.rows.map((r) => ({
+          id: r.id,
+          memoryCode: r.memory_code,
+          sourceIncident: r.title,
+          sourceIncidentCode: r.source_incident_code,
+          vectorId: r.vector_id,
+          knowledgeDomain: r.knowledge_domain,
+          context: [],
+          action: r.action,
+          outcome: r.outcome,
+          outcomeDetail: r.outcome_detail,
+          learnedInsight: r.learned_insight,
+          rootCause: r.root_cause,
+          decision: r.decision,
+          patternCode: r.pattern_code,
+          confidence: Number(r.confidence_score),
+          relatedMemories: [],
+          extractedRule: r.extracted_rule,
+          antiPatternSignature: r.anti_pattern_signature,
+          failureMechanism: r.root_cause,
+          semanticTags: r.semantic_tags || [],
+          recallCount: 4,
+          lastRecalledAt: new Date(r.updated_at || r.created_at).toISOString(),
+          indexingDate: new Date(r.created_at).toISOString(),
+        }));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[PostgreSQL] Error in getAllHindsightMemories:", msg);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  return Array.from(new Set(memoryStore.hindsightMemories.values()));
+}
+
+export const db = {
+  getDbPool,
+  isDatabaseConnected,
+  getDatabaseHealth,
+  initDbSchema,
+  insertIncident,
+  getAllIncidents,
+  getIncidentById,
+  updateIncidentStatus,
+  insertDiagnosis,
+  getDiagnosisForIncident,
+  insertActionExecution,
+  getExecutionsForIncident,
+  insertVerification,
+  getVerificationsForIncident,
+  insertAuditLog,
+  getAuditLogsForIncident,
+  insertHindsightMemory,
+  searchHindsightMemories,
+  updateHindsightMemoryOutcome,
+  updateHindsightLearning,
+  getAllHindsightMemories,
+  listIncidents: getAllIncidents,
+};
