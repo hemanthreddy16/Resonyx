@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
-import { Bell, AlertTriangle, ShieldCheck, Zap, X, CheckCircle2 } from "lucide-react";
+import React, { useRef, useEffect, useState } from "react";
+import { Bell, AlertTriangle, X, Loader2 } from "lucide-react";
 import Link from "next/link";
 
 interface NotificationsDrawerProps {
@@ -9,8 +9,23 @@ interface NotificationsDrawerProps {
   onClose: () => void;
 }
 
+interface ActiveIncident {
+  id: string;
+  code: string;
+  title: string;
+  service: string;
+  severity: string;
+  status: string;
+  occurredAt?: string;
+}
+
+const ACTIVE_STATUSES = new Set(["investigating", "mitigated", "learning-indexed"]);
+
 export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
+  const [activeIncidents, setActiveIncidents] = useState<ActiveIncident[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -26,109 +41,105 @@ export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProp
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  // Alerts are derived from incidents that are not yet resolved.
+  useEffect(() => {
+    if (!isOpen) return;
 
-  const notifications = [
-    {
-      id: "n-1",
-      type: "risk",
-      title: "Critical Deployment Blast Radius Detected",
-      description: "PR #4892 introduces unbounded sync gRPC client matching INC-8942 failure vector.",
-      time: "8 mins ago",
-      target: "/risk-detection",
-      severity: "critical",
-    },
-    {
-      id: "n-2",
-      type: "pattern",
-      title: "New Failure Pattern Crystallized",
-      description: "PAT-CASCADING-QUEUE-01 confidence elevated to 98% based on latest cluster telemetry.",
-      time: "24 mins ago",
-      target: "/patterns",
-      severity: "high",
-    },
-    {
-      id: "n-3",
-      type: "prevention",
-      title: "Automated Guardrail Blocked Production Outage",
-      description: "PRV-104 intercepted un-hedged timeout in checkout-v2.14 before staging rollout.",
-      time: "1 hour ago",
-      target: "/prevention",
-      severity: "success",
-    },
-    {
-      id: "n-4",
-      type: "hindsight",
-      title: "Hindsight Memory Index Sync Completed",
-      description: "14,820 organizational failure vectors re-indexed with zero drift.",
-      time: "3 hours ago",
-      target: "/hindsight",
-      severity: "info",
-    }
-  ];
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+
+    fetch("/api/incidents", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("request failed"))))
+      .then((json) => {
+        if (cancelled) return;
+        const rows: ActiveIncident[] = Array.isArray(json?.data) ? json.data : [];
+        setActiveIncidents(
+          rows
+            .filter((i) => ACTIVE_STATUSES.has(String(i.status).toLowerCase()))
+            .sort((a, b) =>
+              String(b.occurredAt || "").localeCompare(String(a.occurredAt || ""))
+            )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   return (
     <div
       ref={drawerRef}
-      className="absolute right-0 top-12 z-50 w-96 overflow-hidden rounded-xl border border-slate-700/80 bg-[#0d1524] shadow-2xl shadow-black/80 ring-1 ring-white/10 animate-in fade-in slide-in-from-top-2 duration-150"
+      className="absolute right-0 top-12 z-50 w-96 overflow-hidden rounded-xl border border-slate-700/80 bg-[#0d1524] shadow-2xl"
     >
       <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 bg-slate-900/60">
         <div className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-sky-400" />
-          <span className="text-xs font-semibold tracking-wide text-white">
-            Operational Intelligence Alerts
+          <span className="text-sm font-semibold tracking-wide text-white">
+            Unresolved Incidents
           </span>
-          <span className="rounded-full bg-red-500/20 px-1.5 py-0.2 text-[10px] font-bold text-red-400 border border-red-500/30">
-            3 New
+          <span className="rounded px-1.5 py-0.5 text-sm font-semibold text-sky-300 border border-sky-800/60">
+            {activeIncidents.length}
           </span>
         </div>
         <button
           onClick={onClose}
           className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-4 w-4" />
         </button>
       </div>
 
       <div className="divide-y divide-slate-800/80 max-h-96 overflow-y-auto">
-        {notifications.map((n) => (
+        {loading && (
+          <div className="flex items-center gap-2 p-4 text-sm text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
+            <span>Loading incidents...</span>
+          </div>
+        )}
+
+        {!loading && failed && (
+          <p className="p-4 text-sm text-slate-400">
+            Could not reach the incident API.
+          </p>
+        )}
+
+        {!loading && !failed && activeIncidents.length === 0 && (
+          <p className="p-4 text-sm text-slate-400">
+            No unresolved incidents in the database.
+          </p>
+        )}
+
+        {activeIncidents.map((inc) => (
           <Link
-            key={n.id}
-            href={n.target}
+            key={inc.id}
+            href={`/incidents/${inc.id}`}
             onClick={onClose}
             className="flex items-start gap-3 p-3.5 hover:bg-slate-800/40 transition-colors block"
           >
             <div className="mt-0.5 shrink-0">
-              {n.type === "risk" && (
-                <div className="rounded-lg bg-red-500/10 p-1.5 text-red-400 border border-red-500/20">
-                  <AlertTriangle className="h-4 w-4" />
-                </div>
-              )}
-              {n.type === "pattern" && (
-                <div className="rounded-lg bg-amber-500/10 p-1.5 text-amber-400 border border-amber-500/20">
-                  <Zap className="h-4 w-4" />
-                </div>
-              )}
-              {n.type === "prevention" && (
-                <div className="rounded-lg bg-emerald-500/10 p-1.5 text-emerald-400 border border-emerald-500/20">
-                  <ShieldCheck className="h-4 w-4" />
-                </div>
-              )}
-              {n.type === "hindsight" && (
-                <div className="rounded-lg bg-sky-500/10 p-1.5 text-sky-400 border border-sky-500/20">
-                  <CheckCircle2 className="h-4 w-4" />
-                </div>
-              )}
+              <div className="rounded-lg bg-sky-500/10 p-1.5 text-sky-400 border border-sky-500/20">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
             </div>
             <div className="flex-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-100">
-                  {n.title}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-slate-100">
+                  {inc.title}
                 </span>
-                <span className="text-[10px] text-slate-400">{n.time}</span>
+                <span className="font-mono text-sm text-sky-400 shrink-0">{inc.code}</span>
               </div>
-              <p className="mt-1 text-xs text-slate-400 leading-relaxed">
-                {n.description}
+              <p className="mt-1 text-sm text-slate-400 leading-relaxed">
+                {inc.service} &middot; {inc.severity} &middot; {inc.status}
               </p>
             </div>
           </Link>
@@ -137,11 +148,11 @@ export function NotificationsDrawer({ isOpen, onClose }: NotificationsDrawerProp
 
       <div className="border-t border-slate-800/80 bg-slate-950/60 p-2.5 text-center">
         <Link
-          href="/risk-detection"
+          href="/incidents"
           onClick={onClose}
-          className="text-[11px] font-medium text-sky-400 hover:text-sky-300"
+          className="text-sm font-medium text-sky-400 hover:text-sky-300"
         >
-          View All System Anomaly Feeds →
+          View all incidents
         </Link>
       </div>
     </div>

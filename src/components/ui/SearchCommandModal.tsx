@@ -1,22 +1,61 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, X, FileText, Network, ShieldCheck, Zap, AlertTriangle, ArrowRight } from "lucide-react";
+import {
+  Search,
+  X,
+  FileText,
+  Network,
+  ShieldCheck,
+  Zap,
+  ArrowRight,
+  Loader2,
+  LayoutDashboard,
+  Sparkles,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import { MOCK_INCIDENTS } from "@/data/mockIncidents";
-import { MOCK_PATTERNS } from "@/data/mockPatterns";
-import { MOCK_HINDSIGHT_MEMORIES } from "@/data/mockHindsightMemory";
 
 interface SearchCommandModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+interface IncidentHit {
+  id: string;
+  code: string;
+  title: string;
+  service: string;
+}
+
+interface MemoryHit {
+  id: string;
+  memoryId: string;
+  incidentTitle: string;
+  rootCause: string;
+  outcome: string;
+}
+
+const QUICK_JUMPS: Array<{
+  label: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+  accent: string;
+}> = [
+  { label: "Overview", path: "/", icon: LayoutDashboard, accent: "text-sky-400" },
+  { label: "Incidents", path: "/incidents", icon: FileText, accent: "text-sky-400" },
+  { label: "Hindsight Memory", path: "/memory", icon: Zap, accent: "text-sky-400" },
+  { label: "Patterns", path: "/patterns", icon: Network, accent: "text-sky-400" },
+  { label: "Prevention", path: "/prevention", icon: ShieldCheck, accent: "text-sky-400" },
+  { label: "Demo", path: "/demo", icon: Sparkles, accent: "text-sky-400" },
+];
+
 export function SearchCommandModal({ isOpen, onClose }: SearchCommandModalProps) {
   const [query, setQuery] = useState("");
+  const [incidents, setIncidents] = useState<IncidentHit[]>([]);
+  const [memories, setMemories] = useState<MemoryHit[]>([]);
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Listen for keyboard escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -29,28 +68,84 @@ export function SearchCommandModal({ isOpen, onClose }: SearchCommandModalProps)
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  // Load real records from the live API endpoints on first open.
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    setLoading(true);
+
+    const load = async () => {
+      try {
+        const [incRes, memRes] = await Promise.all([
+          fetch("/api/incidents", { cache: "no-store" }),
+          fetch("/api/memories", { cache: "no-store" }),
+        ]);
+
+        const incJson = incRes.ok ? await incRes.json() : null;
+        const memJson = memRes.ok ? await memRes.json() : null;
+
+        if (cancelled) return;
+
+        if (Array.isArray(incJson?.data)) {
+          setIncidents(
+            incJson.data.map((i: IncidentHit) => ({
+              id: i.id,
+              code: i.code,
+              title: i.title,
+              service: i.service,
+            }))
+          );
+        }
+        if (Array.isArray(memJson?.data?.memories)) {
+          setMemories(
+            memJson.data.memories.map((m: MemoryHit) => ({
+              id: m.id,
+              memoryId: m.memoryId,
+              incidentTitle: m.incidentTitle,
+              rootCause: m.rootCause,
+              outcome: m.outcome,
+            }))
+          );
+        }
+      } catch {
+        // Search stays empty if the API is unreachable.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const filteredIncidents = MOCK_INCIDENTS.filter(
-    (i) =>
-      i.title.toLowerCase().includes(query.toLowerCase()) ||
-      i.code.toLowerCase().includes(query.toLowerCase()) ||
-      i.service.toLowerCase().includes(query.toLowerCase())
-  ).slice(0, 3);
+  const q = query.trim().toLowerCase();
 
-  const filteredPatterns = MOCK_PATTERNS.filter(
-    (p) =>
-      p.name.toLowerCase().includes(query.toLowerCase()) ||
-      p.patternCode.toLowerCase().includes(query.toLowerCase()) ||
-      p.description.toLowerCase().includes(query.toLowerCase())
-  ).slice(0, 3);
+  const filteredIncidents = q
+    ? incidents
+        .filter(
+          (i) =>
+            i.title.toLowerCase().includes(q) ||
+            i.code.toLowerCase().includes(q) ||
+            i.service.toLowerCase().includes(q)
+        )
+        .slice(0, 5)
+    : [];
 
-  const filteredMemories = MOCK_HINDSIGHT_MEMORIES.filter(
-    (m) =>
-      m.extractedRule.toLowerCase().includes(query.toLowerCase()) ||
-      m.knowledgeDomain.toLowerCase().includes(query.toLowerCase()) ||
-      m.sourceIncidentCode.toLowerCase().includes(query.toLowerCase())
-  ).slice(0, 2);
+  const filteredMemories = q
+    ? memories
+        .filter(
+          (m) =>
+            (m.incidentTitle || "").toLowerCase().includes(q) ||
+            (m.rootCause || "").toLowerCase().includes(q) ||
+            (m.memoryId || "").toLowerCase().includes(q)
+        )
+        .slice(0, 4)
+    : [];
 
   const handleNavigate = (path: string) => {
     router.push(path);
@@ -60,7 +155,7 @@ export function SearchCommandModal({ isOpen, onClose }: SearchCommandModalProps)
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 pt-20 backdrop-blur-sm animate-in fade-in duration-200">
       <div
-        className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-700/80 bg-[#0e1626] shadow-2xl shadow-black/80 ring-1 ring-white/10"
+        className="w-full max-w-2xl overflow-hidden rounded-xl border border-slate-700/80 bg-[#0e1626] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Search Input Bar */}
@@ -70,7 +165,7 @@ export function SearchCommandModal({ isOpen, onClose }: SearchCommandModalProps)
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search organizational failures, patterns, Hindsight vectors, or guardrails... (Esc to exit)"
+            placeholder="Search incidents and memory... (Esc to exit)"
             className="ml-3 w-full bg-transparent text-sm text-slate-100 placeholder-slate-400 focus:outline-none"
             autoFocus
           />
@@ -82,149 +177,105 @@ export function SearchCommandModal({ isOpen, onClose }: SearchCommandModalProps)
           </button>
         </div>
 
-        {/* Content results */}
         <div className="max-h-[60vh] overflow-y-auto p-3 space-y-4">
-          {/* Quick Categories */}
           {query === "" && (
             <div className="p-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                Suggested Quick Jumps
+              <span className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+                Quick Jumps
               </span>
               <div className="mt-2 grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleNavigate("/patterns")}
-                  className="flex items-center gap-2.5 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2.5 text-left text-xs text-slate-300 hover:border-sky-500/30 hover:bg-slate-800/80 transition-colors"
-                >
-                  <Network className="h-4 w-4 text-sky-400" />
-                  <span>Explore Pattern Intelligence</span>
-                </button>
-                <button
-                  onClick={() => handleNavigate("/hindsight")}
-                  className="flex items-center gap-2.5 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2.5 text-left text-xs text-slate-300 hover:border-sky-500/30 hover:bg-slate-800/80 transition-colors"
-                >
-                  <Zap className="h-4 w-4 text-cyan-400" />
-                  <span>Hindsight Memory Bank</span>
-                </button>
-                <button
-                  onClick={() => handleNavigate("/risk-detection")}
-                  className="flex items-center gap-2.5 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2.5 text-left text-xs text-slate-300 hover:border-sky-500/30 hover:bg-slate-800/80 transition-colors"
-                >
-                  <AlertTriangle className="h-4 w-4 text-amber-400" />
-                  <span>Pre-Deploy Risk Detection</span>
-                </button>
-                <button
-                  onClick={() => handleNavigate("/prevention")}
-                  className="flex items-center gap-2.5 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2.5 text-left text-xs text-slate-300 hover:border-sky-500/30 hover:bg-slate-800/80 transition-colors"
-                >
-                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                  <span>Prevention Policy Center</span>
-                </button>
+                {QUICK_JUMPS.map((jump) => {
+                  const Icon = jump.icon;
+                  return (
+                    <button
+                      key={jump.label}
+                      onClick={() => handleNavigate(jump.path)}
+                      className="flex items-center gap-2.5 rounded-lg border border-slate-800/80 bg-slate-900/60 p-2.5 text-left text-sm text-slate-300 hover:border-sky-500/30 hover:bg-slate-800/80 transition-colors"
+                    >
+                      <Icon className={`h-4 w-4 ${jump.accent}`} />
+                      <span>{jump.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* Incidents Section */}
+          {loading && query === "" && (
+            <div className="flex items-center gap-2 px-2 py-4 text-sm text-slate-400">
+              <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
+              <span>Loading records from the database...</span>
+            </div>
+          )}
+
+          {q !== "" && filteredIncidents.length === 0 && filteredMemories.length === 0 && (
+            <div className="px-2 py-6 text-center text-sm text-slate-400">
+              No records match &quot;{query}&quot;.
+            </div>
+          )}
+
           {filteredIncidents.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                <FileText className="h-3.5 w-3.5 text-slate-400" />
-                <span>Historical Incidents</span>
+              <div className="flex items-center gap-1.5 px-2 text-sm font-semibold uppercase tracking-wider text-slate-400">
+                <FileText className="h-4 w-4 text-slate-400" />
+                <span>Incidents</span>
               </div>
               <div className="mt-1 space-y-1">
                 {filteredIncidents.map((inc) => (
-                  <div
+                  <button
                     key={inc.id}
-                    onClick={() => handleNavigate(`/incidents`)}
-                    className="group flex cursor-pointer items-center justify-between rounded-lg p-2 hover:bg-slate-800/60 transition-colors"
+                    onClick={() => handleNavigate(`/incidents/${inc.id}`)}
+                    className="group flex w-full cursor-pointer items-center justify-between rounded-lg p-2 text-left hover:bg-slate-800/60 transition-colors"
                   >
                     <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs text-sky-400">{inc.code}</span>
-                      <span className="text-xs font-medium text-slate-200 group-hover:text-white">
+                      <span className="font-mono text-sm text-sky-400">{inc.code}</span>
+                      <span className="text-sm font-medium text-slate-200 group-hover:text-white">
                         {inc.title}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-400 group-hover:text-sky-300 flex items-center gap-1">
+                    <span className="text-sm text-slate-400 group-hover:text-sky-300 flex items-center gap-1">
                       {inc.service}
                       <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Patterns Section */}
-          {filteredPatterns.length > 0 && (
-            <div>
-              <div className="flex items-center gap-1.5 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                <Network className="h-3.5 w-3.5 text-sky-400" />
-                <span>Recurring Failure Patterns</span>
-              </div>
-              <div className="mt-1 space-y-1">
-                {filteredPatterns.map((pat) => (
-                  <div
-                    key={pat.id}
-                    onClick={() => handleNavigate(`/patterns`)}
-                    className="group flex cursor-pointer items-center justify-between rounded-lg p-2 hover:bg-slate-800/60 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] font-mono text-sky-300">
-                        {pat.patternCode}
-                      </span>
-                      <span className="text-xs font-medium text-slate-200 group-hover:text-white line-clamp-1">
-                        {pat.name}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-emerald-400 shrink-0">
-                      {pat.confidenceScore}% confidence
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Hindsight Memory Vectors */}
           {filteredMemories.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                <Zap className="h-3.5 w-3.5 text-cyan-400" />
-                <span>Hindsight Memory Rules</span>
+              <div className="flex items-center gap-1.5 px-2 text-sm font-semibold uppercase tracking-wider text-slate-400">
+                <Zap className="h-4 w-4 text-sky-400" />
+                <span>Hindsight Memory</span>
               </div>
               <div className="mt-1 space-y-1">
                 {filteredMemories.map((mem) => (
-                  <div
+                  <button
                     key={mem.id}
-                    onClick={() => handleNavigate(`/hindsight`)}
-                    className="group flex cursor-pointer flex-col rounded-lg p-2 hover:bg-slate-800/60 transition-colors"
+                    onClick={() => handleNavigate("/memory")}
+                    className="group flex w-full cursor-pointer flex-col rounded-lg p-2 text-left hover:bg-slate-800/60 transition-colors"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold text-cyan-300">
-                        {mem.knowledgeDomain}
+                      <span className="text-sm font-semibold text-sky-300">
+                        {mem.memoryId}
                       </span>
-                      <span className="font-mono text-[10px] text-slate-400">
-                        {mem.vectorId}
+                      <span className="font-mono text-sm text-slate-400">
+                        {mem.outcome}
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-300 line-clamp-1">
-                      {mem.extractedRule}
+                    <p className="mt-1 text-sm text-slate-300 line-clamp-1">
+                      {mem.incidentTitle}
                     </p>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-slate-800/80 bg-slate-950/60 px-4 py-2 text-[11px] text-slate-400">
-          <div className="flex items-center gap-2">
-            <span>Navigation:</span>
-            <kbd className="rounded border border-slate-700 bg-slate-800 px-1 text-[10px]">↑</kbd>
-            <kbd className="rounded border border-slate-700 bg-slate-800 px-1 text-[10px]">↓</kbd>
-            <kbd className="rounded border border-slate-700 bg-slate-800 px-1 text-[10px]">Enter</kbd>
-          </div>
-          <span className="font-mono text-sky-400">RESONYX Hindsight Index v3.4</span>
+        <div className="flex items-center justify-between border-t border-slate-800/80 bg-slate-950/60 px-4 py-2 text-sm text-slate-400">
+          <span>Search runs against the live database.</span>
         </div>
       </div>
     </div>

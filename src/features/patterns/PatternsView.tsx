@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Sparkles,
   X,
-  Terminal,
   ChevronRight,
 } from "lucide-react";
 import {
@@ -25,7 +24,6 @@ import {
 } from "recharts";
 import { MOCK_PATTERNS } from "@/data/mockPatterns";
 import { FailurePattern } from "@/types";
-import { formatCurrency } from "@/utils/formatters";
 
 // Chart 1: Pattern Frequency & Recurrence
 const FREQUENCY_DATA = [
@@ -47,7 +45,7 @@ export function PatternsView() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedPattern, setSelectedPattern] = useState<FailurePattern | null>(MOCK_PATTERNS[0]);
-  const [chartView, setChartView] = useState<"resolution" | "confidence" | "impact">("resolution");
+  const [chartView, setChartView] = useState<"resolution" | "confidence" | "observed">("resolution");
   const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
 
   // Filtered patterns
@@ -71,14 +69,9 @@ export function PatternsView() {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-              Pattern Intelligence
-            </h1>
-            <span className="rounded-md bg-sky-950 px-2.5 py-1 text-xs font-mono text-sky-400 border border-sky-800/60 font-semibold">
-              Core Differentiating Engine
-            </span>
-          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+            Pattern Intelligence
+          </h1>
           <p className="mt-1 text-sm sm:text-base font-medium text-slate-300">
             Patterns discovered from organizational memory
           </p>
@@ -86,11 +79,11 @@ export function PatternsView() {
 
         <div className="flex items-center gap-3">
           <Link
-            href="/ai-command"
+            href="/demo"
             className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-sky-950/50 hover:bg-sky-500 transition-colors"
           >
-            <Terminal className="h-4 w-4" />
-            <span>Simulate Anti-Pattern</span>
+            <Sparkles className="h-4 w-4" />
+            <span>Interactive Demo</span>
           </Link>
         </div>
       </div>
@@ -101,13 +94,13 @@ export function PatternsView() {
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-300">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>Unsupervised Failure Graph Clustering</span>
+              <span>Failure Graph Clustering</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-              AI-Discovered Systemic Anti-Patterns
+              Systemic Anti-Patterns
             </h2>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              By continuously correlating 1,284 historical postmortems, 8,492 memory vectors, and operator decisions, Resonyx discovers repeating failure signatures that humans miss.
+              By continuously correlating historical postmortems, memory vectors, and operator decisions, Resonyx discovers repeating failure signatures that humans miss.
             </p>
           </div>
 
@@ -117,19 +110,21 @@ export function PatternsView() {
                 Catalogued Signatures
               </span>
               <span className="text-2xl font-bold font-mono text-white mt-0.5 block">
-                43 Active
+                {MOCK_PATTERNS.length} Active
               </span>
-              <span className="text-[10px] text-emerald-400 font-medium">94.2% Mean Confidence</span>
+              <span className="text-[10px] text-emerald-400 font-medium">
+                {Math.round(MOCK_PATTERNS.reduce((acc, p) => acc + p.confidenceScore, 0) / MOCK_PATTERNS.length)}% Mean Confidence
+              </span>
             </div>
 
             <div className="rounded-xl border border-sky-500/30 bg-slate-950/80 p-3.5 text-center min-w-[130px]">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                Capital Shielded
+                Total Resolutions
               </span>
               <span className="text-2xl font-bold font-mono text-emerald-400 mt-0.5 block">
-                $6.4M
+                {MOCK_PATTERNS.reduce((acc, p) => acc + p.successfulResolutions, 0)}
               </span>
-              <span className="text-[10px] text-slate-400 font-medium">Averted downtime</span>
+              <span className="text-[10px] text-slate-400 font-medium">Historical fixes verified</span>
             </div>
           </div>
         </div>
@@ -170,14 +165,14 @@ export function PatternsView() {
               Confidence Over Time
             </button>
             <button
-              onClick={() => setChartView("impact")}
+              onClick={() => setChartView("observed")}
               className={`px-3 py-1.5 text-xs font-semibold rounded transition-colors ${
-                chartView === "impact"
+                chartView === "observed"
                   ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              Financial Impact ($K)
+              Incidents Observed
             </button>
           </div>
         </div>
@@ -228,20 +223,14 @@ export function PatternsView() {
             </ResponsiveContainer>
           )}
 
-          {chartView === "impact" && (
+          {chartView === "observed" && (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={FREQUENCY_DATA} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="impactGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0284c7" stopOpacity={0.9} />
-                    <stop offset="100%" stopColor="#0369a1" stopOpacity={0.4} />
-                  </linearGradient>
-                </defs>
+              <BarChart data={FREQUENCY_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis dataKey="pattern" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis stroke="#64748b" fontSize={11} tickLine={false} tickFormatter={(v) => `$${v}K`} />
+                <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
                 <Tooltip
-                  formatter={(val: unknown) => [`$${Number(val ?? 0).toLocaleString()}K`, "Downtime Capital Averted"]}
+                  formatter={(val: unknown) => [`${Number(val ?? 0)} incidents`, "Observed Incidents"]}
                   contentStyle={{
                     backgroundColor: "#0d1525",
                     borderColor: "#334155",
@@ -250,7 +239,7 @@ export function PatternsView() {
                     color: "#f8fafc",
                   }}
                 />
-                <Bar dataKey="impact" name="Financial Impact Averted ($K)" fill="url(#impactGrad)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="observed" name="Observed Incidents" fill="#38bdf8" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -500,9 +489,9 @@ export function PatternsView() {
                 </div>
 
                 <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Capital Shielded</span>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Resolution Rate</span>
                   <div className="mt-1 font-mono text-lg font-bold text-sky-300">
-                    {formatCurrency(selectedPattern.financialImpactAverted)}
+                    {Math.round((selectedPattern.successfulResolutions / Math.max(1, selectedPattern.successfulResolutions + selectedPattern.failedResolutions)) * 100)}%
                   </div>
                 </div>
               </div>

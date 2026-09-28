@@ -13,7 +13,6 @@ import {
   Sparkles,
   X,
   FileText,
-  Database,
   Activity,
   Layers,
   Search,
@@ -73,13 +72,25 @@ export function PreventionView() {
     subtext: string;
   } | null>(null);
 
-  // Stats counters (reactive)
-  const [stats, setStats] = useState({
-    activeGuardrails: 18,
-    failuresPrevented: 127,
-    avgRiskReduction: 68.4,
-    capitalSavedM: 1.84,
-  });
+  // Dynamic stats computed directly from action state
+  const allActions = [
+    ...recommendations,
+    ...appliedActions,
+    ...scheduledActions,
+    ...completedActions,
+  ];
+  const activeGuardrails = appliedActions.length + completedActions.length;
+  const pendingActions = recommendations.length;
+  const scheduledCount = scheduledActions.length;
+  const avgRiskReduction =
+    allActions.length > 0
+      ? parseFloat(
+          (
+            allActions.reduce((s, r) => s + r.estimatedRiskReduction, 0) /
+            allActions.length
+          ).toFixed(1)
+        )
+      : 0;
 
   // Prevention activity timeline
   const [activityTimeline, setActivityTimeline] = useState<TimelineAuditItem[]>([
@@ -126,13 +137,7 @@ export function PreventionView() {
 
     setAppliedActions((prev) => [updatedRec, ...prev]);
 
-    // 3. Update dashboard statistics
-    setStats((prev) => ({
-      activeGuardrails: prev.activeGuardrails + 1,
-      failuresPrevented: prev.failuresPrevented + 1,
-      avgRiskReduction: parseFloat(((prev.avgRiskReduction * 5 + rec.estimatedRiskReduction) / 6).toFixed(1)),
-      capitalSavedM: parseFloat((prev.capitalSavedM + 0.14).toFixed(2)),
-    }));
+
 
     // 4. Create a timeline event
     const newTimelineItem: TimelineAuditItem = {
@@ -246,7 +251,7 @@ export function PreventionView() {
 
           <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
             <span className="font-mono text-xs text-slate-400">
-              Active Gates: <strong className="text-emerald-400">{stats.activeGuardrails}</strong>
+              Active Gates: <strong className="text-emerald-400">{activeGuardrails}</strong>
             </span>
           </div>
         </div>
@@ -308,7 +313,7 @@ export function PreventionView() {
             <Shield className="h-4 w-4 text-sky-400" />
           </div>
           <div className="mt-2 text-2xl font-bold font-mono text-white">
-            {stats.activeGuardrails}
+            {activeGuardrails}
           </div>
           <div className="mt-1 text-[11px] text-slate-400">
             Active in CI/CD &amp; runtime proxies
@@ -317,14 +322,14 @@ export function PreventionView() {
 
         <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-md shadow-md">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase tracking-wider">
-            <span>Prevented Failures</span>
+            <span>Pending Review</span>
             <ShieldCheck className="h-4 w-4 text-emerald-400" />
           </div>
           <div className="mt-2 text-2xl font-bold font-mono text-emerald-400">
-            {stats.failuresPrevented}
+            {pendingActions}
           </div>
           <div className="mt-1 text-[11px] text-emerald-400/80">
-            +3 in last 7 calendar days
+            Recommended actions ready
           </div>
         </div>
 
@@ -334,7 +339,7 @@ export function PreventionView() {
             <Activity className="h-4 w-4 text-amber-400" />
           </div>
           <div className="mt-2 text-2xl font-bold font-mono text-amber-400">
-            {stats.avgRiskReduction}%
+            {avgRiskReduction}%
           </div>
           <div className="mt-1 text-[11px] text-slate-400">
             Measured pre vs post deployment
@@ -343,14 +348,14 @@ export function PreventionView() {
 
         <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 backdrop-blur-md shadow-md">
           <div className="flex items-center justify-between text-slate-400 text-xs font-mono uppercase tracking-wider">
-            <span>Capital Downtime Averted</span>
-            <Database className="h-4 w-4 text-indigo-400" />
+            <span>Scheduled Policies</span>
+            <Clock className="h-4 w-4 text-indigo-400" />
           </div>
           <div className="mt-2 text-2xl font-bold font-mono text-white">
-            ${stats.capitalSavedM}M
+            {scheduledCount}
           </div>
           <div className="mt-1 text-[11px] text-slate-400">
-            Based on historical SLA MTTR baseline
+            Queued for deployment window
           </div>
         </div>
       </div>
@@ -699,7 +704,7 @@ export function PreventionView() {
                   <th className="p-4">Derived Pattern</th>
                   <th className="p-4">Execution Date</th>
                   <th className="p-4">Risk Reduction</th>
-                  <th className="p-4">Downtime Capital Saved</th>
+                  <th className="p-4">Status</th>
                   <th className="p-4 text-right">Details</th>
                 </tr>
               </thead>
@@ -724,8 +729,10 @@ export function PreventionView() {
                     <td className="p-4 font-mono font-bold text-emerald-400">
                       -{rec.estimatedRiskReduction}%
                     </td>
-                    <td className="p-4 font-mono font-bold text-white">
-                      {rec.metricsAverted?.estimatedSavedCapital || "$90,000"}
+                    <td className="p-4 font-mono text-slate-300">
+                      <span className="rounded bg-emerald-950 px-2 py-0.5 text-emerald-300 border border-emerald-800/40 text-[11px]">
+                        Enforced
+                      </span>
                     </td>
                     <td className="p-4 text-right">
                       <button
@@ -954,27 +961,25 @@ export function PreventionView() {
                 </div>
               </div>
 
-              {/* Capital & MTTR Impact */}
-              {evidenceModalRec.metricsAverted && (
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-center">
-                    <span className="text-[10px] uppercase font-mono text-slate-400">
-                      Estimated Saved Outage Loss
-                    </span>
-                    <div className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
-                      {evidenceModalRec.metricsAverted.estimatedSavedCapital}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-center">
-                    <span className="text-[10px] uppercase font-mono text-slate-400">
-                      Expected MTTR Reduction
-                    </span>
-                    <div className="text-lg font-bold font-mono text-sky-400 mt-0.5">
-                      {evidenceModalRec.metricsAverted.mttrReduction}
-                    </div>
+              {/* Risk Reduction & Infrastructure Target */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-center">
+                  <span className="text-[10px] uppercase font-mono text-slate-400">
+                    Estimated Risk Reduction
+                  </span>
+                  <div className="text-lg font-bold font-mono text-emerald-400 mt-0.5">
+                    {evidenceModalRec.estimatedRiskReduction}%
                   </div>
                 </div>
-              )}
+                <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-center">
+                  <span className="text-[10px] uppercase font-mono text-slate-400">
+                    Target Infrastructure
+                  </span>
+                  <div className="text-sm font-bold font-mono text-sky-400 mt-0.5 truncate">
+                    {evidenceModalRec.targetSystem}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="border-t border-slate-800 bg-slate-950 px-6 py-3.5 flex items-center justify-between">

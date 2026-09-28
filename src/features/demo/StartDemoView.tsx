@@ -1,37 +1,34 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
-  Play,
-  Pause,
   RotateCcw,
   ChevronRight,
   ChevronLeft,
   AlertOctagon,
-  Brain,
-  Activity,
-  Layers,
-  ShieldAlert,
-  ShieldCheck,
-  Sparkles,
-  CheckCircle2,
   Database,
+  Cpu,
+  Layers,
+  CheckCircle2,
+  Sparkles,
+  ArrowRight,
   Check,
 } from "lucide-react";
 import {
   AIDiagnosisResult,
-  AIRecoveryStrategy,
   ActionExecutionRecord,
-  VerificationRecord,
   AllowedRecoveryActionType,
 } from "@/types";
 
-interface DemoStep {
-  stepNumber: number;
-  label: string;
-  name: string;
-  durationMs: number;
+interface RetrievedMemorySummary {
+  memoryCode: string;
+  source: string;
+  insight: string;
+  outcome: string;
+  action: string;
+  confidence?: number;
+  similarity: string;
 }
 
 interface DiagnosisDataState {
@@ -39,12 +36,7 @@ interface DiagnosisDataState {
   incidentId: string;
   diagnosis: AIDiagnosisResult;
   retrievedMemoriesCount?: number;
-}
-
-interface StrategyDataState {
-  incidentId: string;
-  strategy: AIRecoveryStrategy;
-  selectedAction?: AllowedRecoveryActionType;
+  retrievedMemories?: RetrievedMemorySummary[];
 }
 
 interface LearningDataState {
@@ -55,42 +47,29 @@ interface LearningDataState {
   newConfidence: number;
 }
 
-const DEMO_STEPS: DemoStep[] = [
-  { stepNumber: 1, label: "01 / 10", name: "INCIDENT", durationMs: 5000 },
-  { stepNumber: 2, label: "02 / 10", name: "INVESTIGATION", durationMs: 4000 },
-  { stepNumber: 3, label: "03 / 10", name: "HINDSIGHT", durationMs: 4000 },
-  { stepNumber: 4, label: "04 / 10", name: "HISTORICAL MATCH", durationMs: 5000 },
-  { stepNumber: 5, label: "05 / 10", name: "PATTERN", durationMs: 4500 },
-  { stepNumber: 6, label: "06 / 10", name: "RISK", durationMs: 4500 },
-  { stepNumber: 7, label: "07 / 10", name: "PREVENTION", durationMs: 5000 },
-  { stepNumber: 8, label: "08 / 10", name: "ACTION", durationMs: 6000 },
-  { stepNumber: 9, label: "09 / 10", name: "OUTCOME", durationMs: 5000 },
-  { stepNumber: 10, label: "10 / 10", name: "LEARNING", durationMs: 8000 },
+const STEP_TITLES = [
+  "A new incident arrives",
+  "Hindsight recalls similar past incidents",
+  "A pattern is detected with success/failure counts",
+  "Resonyx recommends an action with evidence",
+  "The outcome is remembered, showing what changed",
 ];
 
 export function StartDemoView() {
   const [currentStep, setCurrentStep] = useState<number>(1);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const [actionAccepted, setActionAccepted] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Live updated statistics
-  const [memoryCount, setMemoryCount] = useState<number>(8492);
-  const [patternConfidence, setPatternConfidence] = useState<number>(94.2);
-  const [preventionCount, setPreventionCount] = useState<number>(127);
+  // Persistence refs
+  const incidentIdRef = useRef<string | null>(null);
+  const incidentCodeRef = useRef<string>("INC-1050");
+  const actionExecutionIdRef = useRef<string | null>(null);
+  const executedStepsRef = useRef<Set<number>>(new Set());
 
-  // Real backend execution state
-  const incidentIdRef = React.useRef<string | null>(null);
-  const incidentCodeRef = React.useRef<string>("INC-1050");
-  const actionExecutionIdRef = React.useRef<string | null>(null);
-  const executedStepsRef = React.useRef<Set<number>>(new Set());
-
-  const [incidentId, setIncidentId] = useState<string | null>(null);
+  // Backend state
   const [incidentCode, setIncidentCode] = useState<string>("INC-1050");
   const [selectedAction, setSelectedAction] = useState<AllowedRecoveryActionType>("isolate_bulkhead");
   const [diagnosisData, setDiagnosisData] = useState<DiagnosisDataState | null>(null);
-  const [strategyData, setStrategyData] = useState<StrategyDataState | null>(null);
   const [executionData, setExecutionData] = useState<ActionExecutionRecord | null>(null);
-  const [verificationData, setVerificationData] = useState<VerificationRecord | null>(null);
   const [learningData, setLearningData] = useState<LearningDataState | null>(null);
   const [dbStats, setDbStats] = useState<{
     incidents: number;
@@ -101,7 +80,7 @@ export function StartDemoView() {
     auditLogs: number;
   } | null>(null);
 
-  // Fetch initial database baseline counts on mount
+  // Fetch initial database baseline
   useEffect(() => {
     fetch("/api/health")
       .then((r) => r.json())
@@ -121,8 +100,8 @@ export function StartDemoView() {
       .catch(() => {});
   }, []);
 
-  // Ensure incident exists in PostgreSQL (POST /api/incidents)
-  const ensureIncident = async (): Promise<{ id: string; code: string }> => {
+  // Step 1: Ensure incident is persisted in PostgreSQL
+  const ensureIncident = useCallback(async (): Promise<{ id: string; code: string }> => {
     if (incidentIdRef.current) {
       return { id: incidentIdRef.current, code: incidentCodeRef.current };
     }
@@ -150,21 +129,19 @@ export function StartDemoView() {
       const code = data?.data?.code || "INC-1050";
       incidentIdRef.current = id;
       incidentCodeRef.current = code;
-      setIncidentId(id);
       setIncidentCode(code);
       return { id, code };
     } catch (err) {
       console.error("[Demo] Error creating incident:", err);
       const fallbackId = `inc-fallback-${Date.now()}`;
       incidentIdRef.current = fallbackId;
-      setIncidentId(fallbackId);
       return { id: fallbackId, code: incidentCodeRef.current };
     }
-  };
+  }, []);
 
-  // Wire each step of the demo to the real backend and database
+  // Execute step-specific backend logic on demand
   useEffect(() => {
-    // STEP 1: Ingest and persist incident
+    // Step 1: Ingest incident
     if (currentStep === 1) {
       if (!executedStepsRef.current.has(1)) {
         executedStepsRef.current.add(1);
@@ -172,10 +149,11 @@ export function StartDemoView() {
       }
     }
 
-    // STEP 6: AI Diagnosis (POST /api/agents/diagnose)
-    if (currentStep === 6) {
-      if (!executedStepsRef.current.has(6)) {
-        executedStepsRef.current.add(6);
+    // Step 2: Hindsight Memory Recall & Diagnosis
+    if (currentStep === 2) {
+      if (!executedStepsRef.current.has(2)) {
+        executedStepsRef.current.add(2);
+        setIsProcessing(true);
         ensureIncident().then(async ({ id }) => {
           try {
             const res = await fetch("/api/agents/diagnose", {
@@ -189,44 +167,81 @@ export function StartDemoView() {
             }
           } catch (e) {
             console.error("[Demo] Diagnose step failed:", e);
+          } finally {
+            setIsProcessing(false);
           }
         });
       }
     }
 
-    // STEP 7: Recovery Strategy (POST /api/agents/strategy)
-    if (currentStep === 7) {
-      if (!executedStepsRef.current.has(7)) {
-        executedStepsRef.current.add(7);
+    // Step 3: Pattern Detection (already supported by diagnosis or patterns query)
+    if (currentStep === 3) {
+      if (!executedStepsRef.current.has(3)) {
+        executedStepsRef.current.add(3);
+        if (!diagnosisData) {
+          ensureIncident().then(async ({ id }) => {
+            try {
+              const res = await fetch("/api/agents/diagnose", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ incidentId: id }),
+              });
+              const d = await res.json();
+              if (d?.data) setDiagnosisData(d.data);
+            } catch (e) {
+              console.error("[Demo] Pattern diagnosis fallback failed:", e);
+            }
+          });
+        }
+      }
+    }
+
+    // Step 4: Recommend Action with Evidence & Execute
+    if (currentStep === 4) {
+      if (!executedStepsRef.current.has(4)) {
+        executedStepsRef.current.add(4);
+        setIsProcessing(true);
         ensureIncident().then(async ({ id }) => {
           try {
-            const res = await fetch("/api/agents/strategy", {
+            const stratRes = await fetch("/api/agents/strategy", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ incidentId: id }),
             });
-            const d = await res.json();
-            if (d?.data) {
-              setStrategyData(d.data);
-              if (d.data.selectedAction) {
-                setSelectedAction(d.data.selectedAction);
+            const stratData = await stratRes.json();
+            if (stratData?.data) {
+              const actionToRun = stratData.data.selectedAction || "isolate_bulkhead";
+              setSelectedAction(actionToRun);
+
+              // Execute recovery action
+              const recRes = await fetch("/api/agents/recover", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ incidentId: id, action: actionToRun }),
+              });
+              const recData = await recRes.json();
+              if (recData?.data?.execution) {
+                actionExecutionIdRef.current = recData.data.execution.id;
+                setExecutionData(recData.data.execution);
               }
             }
           } catch (e) {
-            console.error("[Demo] Strategy step failed:", e);
+            console.error("[Demo] Strategy/Recover step failed:", e);
+          } finally {
+            setIsProcessing(false);
           }
         });
       }
     }
 
-    // STEP 9: Outcome Verification (POST /api/agents/verify)
-    if (currentStep === 9) {
-      if (!executedStepsRef.current.has(9)) {
-        executedStepsRef.current.add(9);
+    // Step 5: Outcome Remembered & Learning Codified
+    if (currentStep === 5) {
+      if (!executedStepsRef.current.has(5)) {
+        executedStepsRef.current.add(5);
+        setIsProcessing(true);
         ensureIncident().then(async ({ id }) => {
           try {
             let execId = actionExecutionIdRef.current;
-            // Ensure recover executed if step 8 was skipped or auto-advanced
             if (!execId) {
               const recRes = await fetch("/api/agents/recover", {
                 method: "POST",
@@ -236,34 +251,18 @@ export function StartDemoView() {
               const recData = await recRes.json();
               execId = recData?.data?.execution?.id;
               actionExecutionIdRef.current = execId;
-              if (recData?.data?.execution) {
-                setExecutionData(recData.data.execution);
-              }
+              if (recData?.data?.execution) setExecutionData(recData.data.execution);
             }
 
-            const res = await fetch("/api/agents/verify", {
+            // Verify outcome
+            await fetch("/api/agents/verify", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ incidentId: id, actionExecutionId: execId }),
             });
-            const d = await res.json();
-            if (d?.data?.verification) {
-              setVerificationData(d.data.verification);
-            }
-          } catch (e) {
-            console.error("[Demo] Verify step failed:", e);
-          }
-        });
-      }
-    }
 
-    // STEP 10: Learning Codification (POST /api/agents/learn) & real health refresh
-    if (currentStep === 10) {
-      if (!executedStepsRef.current.has(10)) {
-        executedStepsRef.current.add(10);
-        ensureIncident().then(async ({ id }) => {
-          try {
-            const res = await fetch("/api/agents/learn", {
+            // Codify learning into Hindsight
+            const learnRes = await fetch("/api/agents/learn", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -275,19 +274,16 @@ export function StartDemoView() {
                 ],
               }),
             });
-            const d = await res.json();
-            if (d?.data) {
-              setLearningData(d.data);
+            const learnData = await learnRes.json();
+            if (learnData?.data) {
+              setLearningData(learnData.data);
             }
 
-            // Fetch REAL updated counts from /api/health directly from PostgreSQL
+            // Refresh real PostgreSQL table counts
             const healthRes = await fetch("/api/health");
             const health = await healthRes.json();
             if (health?.services?.database?.records) {
               const rec = health.services.database.records;
-              setMemoryCount(rec.memories || 8493);
-              setPreventionCount(rec.verifications || rec.incidents || 128);
-              setPatternConfidence(95.0);
               setDbStats({
                 incidents: rec.incidents || 0,
                 diagnoses: rec.diagnoses || 0,
@@ -301,739 +297,481 @@ export function StartDemoView() {
               }
             }
           } catch (e) {
-            console.error("[Demo] Learn step failed:", e);
+            console.error("[Demo] Verify/Learn step failed:", e);
+          } finally {
+            setIsProcessing(false);
           }
         });
       }
     }
-  }, [currentStep, selectedAction]);
+  }, [currentStep, selectedAction, ensureIncident, diagnosisData]);
 
-  // Auto-advance timer when isPlaying is true (except step 8 where judge can click action)
-  useEffect(() => {
-    if (!isPlaying) return;
-
-    // In step 8, wait until accepted or auto-accept after timeout
-    const currentStepConfig = DEMO_STEPS[currentStep - 1];
-    const duration = currentStepConfig ? currentStepConfig.durationMs : 5000;
-
-    const timer = setTimeout(async () => {
-      if (currentStep < 10) {
-        if (currentStep === 8 && !actionAccepted) {
-          setActionAccepted(true);
-          // Auto-execute recovery action
-          if (!executedStepsRef.current.has(8)) {
-            executedStepsRef.current.add(8);
-            ensureIncident().then(async ({ id }) => {
-              try {
-                const res = await fetch("/api/agents/recover", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ incidentId: id, action: selectedAction || "isolate_bulkhead" }),
-                });
-                const d = await res.json();
-                if (d?.data?.execution?.id) {
-                  actionExecutionIdRef.current = d.data.execution.id;
-                  setExecutionData(d.data.execution);
-                }
-              } catch (e) {
-                console.error("[Demo] Auto recover execution failed:", e);
-              }
-            });
-          }
-        }
-        setCurrentStep((prev) => prev + 1);
-      } else {
-        setIsPlaying(false);
-      }
-    }, duration);
-
-    return () => clearTimeout(timer);
-  }, [currentStep, isPlaying, actionAccepted, selectedAction]);
+  // Restart handler
+  const handleRestart = () => {
+    incidentIdRef.current = null;
+    actionExecutionIdRef.current = null;
+    executedStepsRef.current = new Set();
+    setDiagnosisData(null);
+    setExecutionData(null);
+    setLearningData(null);
+    setCurrentStep(1);
+  };
 
   const handleNext = () => {
-    if (currentStep === 8 && !actionAccepted) {
-      handleAcceptRecommendation();
-      return;
-    }
-    if (currentStep < 10) {
+    if (currentStep < 5) {
       setCurrentStep((prev) => prev + 1);
     }
   };
 
-  const handlePrev = () => {
+  const handleBack = () => {
     if (currentStep > 1) {
       setCurrentStep((prev) => prev - 1);
     }
   };
 
-  const handleRestart = () => {
-    incidentIdRef.current = null;
-    incidentCodeRef.current = "INC-1050";
-    actionExecutionIdRef.current = null;
-    executedStepsRef.current.clear();
-    setIncidentId(null);
-    setIncidentCode("INC-1050");
-    setDiagnosisData(null);
-    setStrategyData(null);
-    setExecutionData(null);
-    setVerificationData(null);
-    setLearningData(null);
-    setActionAccepted(false);
-    setCurrentStep(1);
-    setIsPlaying(true);
-    setMemoryCount(8492);
-    setPatternConfidence(94.2);
-    setPreventionCount(127);
-  };
-
-  const handleAcceptRecommendation = async () => {
-    setActionAccepted(true);
-    if (!executedStepsRef.current.has(8)) {
-      executedStepsRef.current.add(8);
-      try {
-        const { id } = await ensureIncident();
-        const res = await fetch("/api/agents/recover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ incidentId: id, action: selectedAction || "isolate_bulkhead" }),
-        });
-        const d = await res.json();
-        if (d?.data?.execution?.id) {
-          actionExecutionIdRef.current = d.data.execution.id;
-          setExecutionData(d.data.execution);
-        }
-      } catch (e) {
-        console.error("[Demo] Recover execution failed:", e);
-      }
-    }
-    setCurrentStep(9);
-  };
-
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Top Demo Controller Bar */}
-      <div className="rounded-2xl border border-sky-500/40 bg-slate-950/90 p-4 sm:p-5 shadow-2xl backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-sky-500/20 p-2 text-sky-400 border border-sky-500/40">
-            <Sparkles className="h-5 w-5 animate-spin" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono font-bold uppercase tracking-wider text-sky-400">
-                60-Second Hackathon Judge Demo
-              </span>
-              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-400 border border-emerald-500/30">
-                {isPlaying ? "Live Auto-Playing" : "Manual Navigation"}
-              </span>
-            </div>
-            <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
-              The Autonomous Failure Prevention Loop
+    <div className="space-y-6 max-w-5xl mx-auto pb-16">
+      {/* Header bar: Title, Step Indicator, Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+              See Resonyx learn
             </h1>
+            <span className="rounded-full bg-sky-950 border border-sky-800/60 px-3 py-1 text-xs font-mono font-bold text-sky-300">
+              {currentStep} / 5
+            </span>
           </div>
+          <p className="mt-1 text-sm text-slate-400">
+            {STEP_TITLES[currentStep - 1]}
+          </p>
         </div>
 
-        {/* Playback Controls & Progress Pill */}
-        <div className="flex items-center gap-2 self-end sm:self-center">
-          {/* Progress Indicator */}
-          <span className="font-mono text-xs sm:text-sm font-black text-sky-400 bg-sky-950/80 px-3 py-1.5 rounded-xl border border-sky-800/60 shadow">
-            {DEMO_STEPS[currentStep - 1]?.label}
-          </span>
-
+        {/* Navigation Controls: Back, Next, Restart (No Auto-Play) */}
+        <div className="flex items-center gap-2.5">
           <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 hover:text-white transition-colors flex items-center gap-1.5"
-          >
-            {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            <span>{isPlaying ? "Pause" : "Play"}</span>
-          </button>
-
-          <button
-            onClick={handlePrev}
-            disabled={currentStep === 1}
-            className="rounded-xl border border-slate-700 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Previous Step"
+            onClick={handleBack}
+            disabled={currentStep === 1 || isProcessing}
+            className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <ChevronLeft className="h-4 w-4" />
+            <span>Back</span>
           </button>
 
-          <button
-            onClick={handleNext}
-            disabled={currentStep === 10}
-            className="rounded-xl border border-slate-700 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Next Step"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
+          {currentStep < 5 ? (
+            <button
+              onClick={handleNext}
+              disabled={isProcessing}
+              className="flex items-center gap-1 rounded-lg bg-sky-600 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-sky-950/50 hover:bg-sky-500 transition-colors disabled:opacity-50"
+            >
+              <span>{isProcessing ? "Processing..." : "Next"}</span>
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              onClick={handleRestart}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/50 hover:bg-emerald-500 transition-colors"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Run again</span>
+            </button>
+          )}
 
           <button
             onClick={handleRestart}
-            className="rounded-xl border border-slate-700 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 transition-colors"
-            title="Restart Demo"
+            title="Restart walkthrough"
+            className="rounded-lg border border-slate-800 bg-slate-900 p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
           >
             <RotateCcw className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      {/* 10-Step Progress Dots Bar */}
-      <div className="grid grid-cols-10 gap-1.5 sm:gap-2">
-        {DEMO_STEPS.map((step) => {
-          const isCurrent = step.stepNumber === currentStep;
-          const isCompleted = step.stepNumber < currentStep;
-
-          return (
-            <button
-              key={step.stepNumber}
-              onClick={() => {
-                setCurrentStep(step.stepNumber);
-                setIsPlaying(false);
-              }}
-              className={`rounded-lg py-2 px-1 text-center transition-all ${
-                isCurrent
-                  ? "bg-sky-500 text-slate-950 font-bold shadow-lg shadow-sky-500/40 scale-105"
-                  : isCompleted
-                  ? "bg-emerald-950/80 border border-emerald-700/60 text-emerald-300"
-                  : "bg-slate-900/60 border border-slate-800 text-slate-500 hover:border-slate-700"
-              }`}
-            >
-              <div className="text-[10px] font-mono leading-none">
-                {step.stepNumber.toString().padStart(2, "0")}
-              </div>
-              <div className="text-[8px] sm:text-[9px] font-mono truncate uppercase mt-1 hidden md:block">
-                {step.name}
-              </div>
-            </button>
-          );
-        })}
+      {/* Progress Dots */}
+      <div className="grid grid-cols-5 gap-2">
+        {[1, 2, 3, 4, 5].map((step) => (
+          <button
+            key={step}
+            onClick={() => setCurrentStep(step)}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              step === currentStep
+                ? "bg-sky-400 ring-2 ring-sky-400/40"
+                : step < currentStep
+                ? "bg-emerald-500"
+                : "bg-slate-800"
+            }`}
+            title={`Step ${step}: ${STEP_TITLES[step - 1]}`}
+          />
+        ))}
       </div>
 
-      {/* DYNAMIC PRESENTATION STAGE (STEPS 1 - 10) */}
-      <div className="min-h-[480px] rounded-3xl border border-slate-800 bg-slate-900/80 p-6 sm:p-10 backdrop-blur-xl shadow-2xl flex flex-col justify-between relative overflow-hidden transition-all duration-300">
-        {/* Subtle Ambient Background Gradient */}
-        <div className="absolute -top-32 -right-32 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-32 -left-32 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
-
-        {/* STEP 1: INCIDENT */}
+      {/* Step Content Area: At most 3 lines of text and one visual */}
+      <div className="rounded-2xl border border-slate-800/90 bg-[#090f1d] p-6 sm:p-8 shadow-2xl space-y-6">
+        {/* STEP 1: A new incident arrives */}
         {currentStep === 1 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-rose-900/50 pb-4">
-              <span className="rounded-md bg-rose-950/80 border border-rose-800/80 px-3 py-1 font-mono text-xs font-bold text-rose-300 flex items-center gap-1.5 animate-pulse">
-                <AlertOctagon className="h-4 w-4 text-rose-400" />
-                STEP 1 — NEW INCIDENT DETECTED
-              </span>
-              <span className="font-mono text-xs text-rose-400 font-bold">P1 CRITICAL OUTAGE</span>
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 3 lines of text */}
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-white">
+                Production telemetry detects severe database contention in payments-core.
+              </p>
+              <p className="text-sm text-slate-300">
+                P99 latency surged to 4,820ms under unexpected 14,850 RPS inbound traffic.
+              </p>
+              <p className="text-xs text-sky-400 font-mono">
+                An operational incident is opened in PostgreSQL to initiate autonomous remediation.
+              </p>
             </div>
 
-            <div className="space-y-3">
-              <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-                {incidentCode || "INC-1050"} — Payment API Latency Degradation
-              </h2>
-              <div className="text-xs sm:text-sm font-mono text-slate-400 flex flex-wrap items-center gap-2">
-                <span>Target: <span className="text-white font-bold">payments-core / aurora-postgres</span> • Dispatched 12s ago</span>
-                {incidentId && (
-                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-400 border border-emerald-500/30">
-                    <Database className="h-3 w-3" /> Persisted to DB ({incidentId})
+            {/* Visual: Live Telemetry Alert Card */}
+            <div className="rounded-xl border border-red-900/60 bg-gradient-to-b from-red-950/20 to-slate-950/90 p-5 shadow-lg space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-900/40 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="font-mono text-xs font-bold text-red-400 bg-red-950 px-2 py-0.5 rounded border border-red-800/60">
+                    {incidentCode}
                   </span>
-                )}
+                  <span className="font-bold text-white text-sm">
+                    Payment API Latency Degradation
+                  </span>
+                  <span className="text-slate-500">•</span>
+                  <span className="font-mono text-xs text-slate-300">payments-core</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-red-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300 border border-red-500/30 animate-pulse">
+                    CRITICAL
+                  </span>
+                  <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300 border border-amber-500/30">
+                    INVESTIGATING
+                  </span>
+                </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-              <div className="rounded-2xl border border-rose-900/60 bg-rose-950/20 p-4">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Inbound RPS Surge</span>
-                <div className="text-2xl font-mono font-black text-rose-400 mt-1">14,850 RPS</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">+312% above nominal baseline</div>
-              </div>
-
-              <div className="rounded-2xl border border-rose-900/60 bg-rose-950/20 p-4">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Database CPU Contention</span>
-                <div className="text-2xl font-mono font-black text-rose-400 mt-1">92.4% CPU</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">Aurora pg-primary-01 saturated</div>
-              </div>
-
-              <div className="rounded-2xl border border-rose-900/60 bg-rose-950/20 p-4">
-                <span className="text-[10px] font-mono uppercase text-slate-400">P99 Checkout Latency</span>
-                <div className="text-2xl font-mono font-black text-rose-400 mt-1">4,820 ms</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">Baseline: 42ms (114x degradation)</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Inbound Traffic</span>
+                  <div className="mt-1 font-mono text-lg font-bold text-amber-400">14,850 RPS</div>
+                  <span className="text-[10px] text-amber-400/80">+312% surge above baseline</span>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">P99 Latency</span>
+                  <div className="mt-1 font-mono text-lg font-bold text-red-400">4,820 ms</div>
+                  <span className="text-[10px] text-red-400/80">114x baseline threshold</span>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">DB Thread Pool</span>
+                  <div className="mt-1 font-mono text-lg font-bold text-red-400">92.4% Saturated</div>
+                  <span className="text-[10px] text-slate-400">Aurora connection deadlock</span>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* STEP 2: INVESTIGATION */}
+        {/* STEP 2: Hindsight recalls similar past incidents */}
         {currentStep === 2 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-sky-500/30 pb-4">
-              <span className="rounded-md bg-sky-950/80 border border-sky-800/80 px-3 py-1 font-mono text-xs font-bold text-sky-300 flex items-center gap-1.5">
-                <Activity className="h-4 w-4 text-sky-400" />
-                STEP 2 — AI INVESTIGATION
-              </span>
-              <span className="font-mono text-xs text-sky-400 font-bold animate-pulse">Live Telemetry Analysis</span>
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 3 lines of text */}
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-white">
+                Resonyx queries Hindsight semantic vector memory for past failure matches.
+              </p>
+              <p className="text-sm text-slate-300">
+                Vector cluster matched historical failure precedent with 98.4% cosine similarity.
+              </p>
+              <p className="text-xs text-sky-400 font-mono">
+                Attributed root cause: Cascading timeout with connection pool starvation.
+              </p>
             </div>
 
-            <div className="space-y-4 text-center py-8">
-              <div className="relative inline-block">
-                <div className="h-20 w-20 rounded-full border-4 border-sky-500/30 border-t-sky-400 animate-spin mx-auto flex items-center justify-center" />
-                <Brain className="h-8 w-8 text-sky-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            {/* Visual: Hindsight Recalled Precedents Card */}
+            <div className="rounded-xl border border-sky-900/50 bg-slate-950/90 p-5 shadow-lg space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-cyan-400" />
+                  <span className="text-sm font-bold text-white">Hindsight Vector Memory Matches</span>
+                </div>
+                <span className="font-mono text-xs text-emerald-400 font-bold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">
+                  98.4% Vector Similarity
+                </span>
               </div>
 
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Analyzing incident...
-              </h2>
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-cyan-300 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800/50">
+                        MEM-0x789f2a
+                      </span>
+                      <span className="text-xs font-semibold text-white">
+                        Downstream Gateway Pool Starvation
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-300">
+                      Identical thread depletion under high concurrency. Successful fix: Isolate Bulkhead.
+                    </p>
+                  </div>
+                  <span className="font-mono text-xs text-emerald-300 shrink-0 font-bold">
+                    ✓ Mitigated in 1.4m
+                  </span>
+                </div>
 
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
-                Ingesting real-time PostgreSQL lock graphs, connection pool queues, and Envoy gateway worker thread backlog.
-                Correlating metric anomalies against active deployment release #8924.
-              </p>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                        MEM-0x431b9c
+                      </span>
+                      <span className="text-xs font-semibold text-slate-300">
+                        Checkout Service Thread Exhaustion
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Unhedged sync client caused cascading lock queue build-up.
+                    </p>
+                  </div>
+                  <span className="font-mono text-xs text-sky-400 shrink-0">
+                    94.1% Similarity
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* STEP 3: HINDSIGHT */}
+        {/* STEP 3: A pattern is detected with success/failure counts */}
         {currentStep === 3 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-purple-500/30 pb-4">
-              <span className="rounded-md bg-purple-950/80 border border-purple-800/80 px-3 py-1 font-mono text-xs font-bold text-purple-300 flex items-center gap-1.5">
-                <Database className="h-4 w-4 text-purple-400" />
-                STEP 3 — HINDSIGHT RETRIEVAL
-              </span>
-              <span className="font-mono text-xs text-purple-400 font-bold">1536-Dimensional Semantic Scan</span>
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 3 lines of text */}
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-white">
+                Correlation engine matches failure signature to PAT-017: Database Contention.
+              </p>
+              <p className="text-sm text-slate-300">
+                Pattern history shows 12 successful resolutions and 5 ineffective interventions.
+              </p>
+              <p className="text-xs text-sky-400 font-mono">
+                System distinguishes proven bulkhead isolation from failed query kill attempts.
+              </p>
             </div>
 
-            <div className="space-y-4 text-center py-8">
-              <div className="relative inline-block">
-                <div className="h-20 w-20 rounded-full border-4 border-purple-500/30 border-t-purple-400 animate-spin mx-auto flex items-center justify-center" />
-                <Brain className="h-8 w-8 text-purple-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            {/* Visual: Pattern Detection & Resolution Efficacy Card */}
+            <div className="rounded-xl border border-amber-900/40 bg-slate-950/90 p-5 shadow-lg space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-amber-400" />
+                  <span className="font-mono text-xs font-bold text-amber-300 bg-amber-950 px-2 py-0.5 rounded border border-amber-800/60">
+                    PAT-017
+                  </span>
+                  <span className="text-sm font-bold text-white">
+                    Synchronous Downstream Bottleneck with Pool Saturation
+                  </span>
+                </div>
+                <span className="text-xs font-mono text-slate-400">17 Observations</span>
               </div>
 
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Searching organizational memory...
-              </h2>
+              {/* Success / Failure Bar */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-emerald-400 font-bold">12 Succeeded (71%)</span>
+                  <span className="text-red-400 font-bold">5 Ineffective (29%)</span>
+                </div>
+                <div className="h-2.5 w-full rounded-full bg-slate-800 overflow-hidden flex">
+                  <div className="bg-emerald-500 h-full w-[71%]" />
+                  <div className="bg-red-500 h-full w-[29%]" />
+                </div>
+              </div>
 
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
-                Querying 8,492 historical failure embeddings across 1,284 past postmortems.
-                Calculating vector distances against past transaction lockouts and threadpool exhaustion events.
-              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+                <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-3 text-emerald-200">
+                  <span className="font-bold text-emerald-400 uppercase text-[10px] block mb-1">
+                    ✓ Proven Effective Action
+                  </span>
+                  Isolate bulkhead thread pools & enforce 650ms deadline propagation.
+                </div>
+                <div className="rounded-lg border border-red-900/40 bg-red-950/20 p-3 text-red-200">
+                  <span className="font-bold text-red-400 uppercase text-[10px] block mb-1">
+                    ✕ Failed Action
+                  </span>
+                  Manual database pod restart triggered thundering herd cache stampede.
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* STEP 4: HISTORICAL MATCH */}
+        {/* STEP 4: Resonyx recommends an action with evidence */}
         {currentStep === 4 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-emerald-500/30 pb-4">
-              <span className="rounded-md bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 font-mono text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                STEP 4 — HISTORICAL MATCH DISCOVERED
-              </span>
-              <span className="font-mono text-xs text-emerald-400 font-bold">Cosine Proximity: 92%</span>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                4 similar incidents found.
-              </h2>
-              <div className="text-xs sm:text-sm text-slate-300 font-mono">
-                Similarity: <strong className="text-emerald-400 text-lg">92% Vector Match</strong>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="font-mono font-bold text-sky-400 text-xs">INC-1047</span>
-                <div className="text-xs font-semibold text-white truncate">Payment API Degradation</div>
-                <div className="text-[10px] font-mono text-emerald-400">94.2% Similarity</div>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="font-mono font-bold text-sky-400 text-xs">INC-1039</span>
-                <div className="text-xs font-semibold text-white truncate">DB Connection Pool Saturation</div>
-                <div className="text-[10px] font-mono text-emerald-400">91.5% Similarity</div>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="font-mono font-bold text-sky-400 text-xs">INC-0994</span>
-                <div className="text-xs font-semibold text-white truncate">Cascading Gateway Timeout</div>
-                <div className="text-[10px] font-mono text-emerald-400">88.7% Similarity</div>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="font-mono font-bold text-sky-400 text-xs">INC-0918</span>
-                <div className="text-xs font-semibold text-white truncate">Checkout Service Deadlock</div>
-                <div className="text-[10px] font-mono text-emerald-400">86.4% Similarity</div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-rose-900/60 bg-rose-950/20 p-3 text-xs text-rose-300 font-medium">
-              CRITICAL HINDSIGHT WARNING: In 2 of these incidents, restarting the service failed and worsened the outage!
-            </div>
-          </div>
-        )}
-
-        {/* STEP 5: PATTERN */}
-        {currentStep === 5 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-amber-500/30 pb-4">
-              <span className="rounded-md bg-amber-950/80 border border-amber-800/80 px-3 py-1 font-mono text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                <Layers className="h-4 w-4 text-amber-400" />
-                STEP 5 — FAILURE PATTERN IDENTIFIED
-              </span>
-              <span className="font-mono text-xs text-amber-400 font-bold">Axiomatic Invariant</span>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Recurring failure pattern detected.
-              </h2>
-              <div className="text-sm text-amber-300 font-mono font-bold">
-                PAT-017 — High Traffic + Database Contention
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-amber-900/40 bg-slate-950 p-5 space-y-3 text-xs sm:text-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
-                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                  <span className="text-[10px] font-mono uppercase text-slate-400">Observed In Fleet</span>
-                  <div className="text-xl font-mono font-bold text-white mt-0.5">17 Times</div>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                  <span className="text-[10px] font-mono uppercase text-slate-400">Successful Remedy</span>
-                  <div className="text-xl font-mono font-bold text-emerald-400 mt-0.5">12 Verified</div>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                  <span className="text-[10px] font-mono uppercase text-slate-400">Failed Action Rate</span>
-                  <div className="text-xl font-mono font-bold text-rose-400 mt-0.5">82% on Restarts</div>
-                </div>
-              </div>
-
-              <p className="text-slate-300 leading-relaxed pt-2">
-                <strong>Codified Invariant:</strong> Combining high ingress traffic (&gt;8,000 RPS) with un-indexed database
-                contention guarantees complete connection pool exhaustion.
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 3 lines of text */}
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-white">
+                Resonyx formulates an evidence-backed recovery strategy from Hindsight learnings.
+              </p>
+              <p className="text-sm text-slate-300">
+                Selected action: isolate_bulkhead to shed non-critical connections and preserve checkout.
+              </p>
+              <p className="text-xs text-sky-400 font-mono">
+                Recovery pipeline executed and persisted to PostgreSQL audit ledger.
               </p>
             </div>
+
+            {/* Visual: Recommended Action & Execution Evidence Card */}
+            <div className="rounded-xl border border-sky-500/40 bg-slate-950/90 p-5 shadow-lg space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-sky-400" />
+                  <span className="text-sm font-bold text-white">Recommended Remediation</span>
+                </div>
+                <span className="rounded bg-sky-500/20 px-2 py-0.5 text-xs font-mono font-bold text-sky-300 border border-sky-500/30">
+                  Evidence-Ranked #1
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-sm font-bold text-white">
+                    Action: {selectedAction}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400 font-mono">
+                    <Check className="h-3.5 w-3.5" />
+                    {executionData ? "Executed" : "Ready"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Isolate worker threadpool bulkhead on payments-core and enforce 650ms client deadline propagation. Rejects unhedged downstream retry storms without failing active user sessions.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 pt-1 font-mono">
+                <span>Target: payments-core (Aurora PG)</span>
+                <span className="text-emerald-400">Execution Status: COMPLETED</span>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* STEP 6: RISK */}
-        {currentStep === 6 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-rose-900/50 pb-4">
-              <span className="rounded-md bg-rose-950/80 border border-rose-800/80 px-3 py-1 font-mono text-xs font-bold text-rose-300 flex items-center gap-1.5">
-                <ShieldAlert className="h-4 w-4 text-rose-400" />
-                STEP 6 — PREDICTIVE RISK SCORE
-              </span>
-              <span className="font-mono text-xs text-rose-400 font-bold animate-pulse">STATUS: ELEVATED</span>
+        {/* STEP 5: The outcome is remembered, showing what changed */}
+        {currentStep === 5 && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* 3 lines of text */}
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-white">
+                Verification confirms P99 latency normalized from 4,820ms to 42ms with 0 errors.
+              </p>
+              <p className="text-sm text-slate-300">
+                Fix outcome codified as new permanent vector memory in PostgreSQL Hindsight store.
+              </p>
+              <p className="text-xs text-emerald-400 font-mono">
+                Organization is now immune to this failure mode; future recurrence will be pre-empted.
+              </p>
             </div>
 
-            <div className="text-center py-6 space-y-3">
-              <div className="text-xs font-mono uppercase text-slate-400 tracking-widest font-bold">
-                Current Operational Risk
-              </div>
-              <div className="flex items-baseline justify-center gap-2">
-                <span className="text-5xl sm:text-7xl font-mono font-black text-rose-400">
-                  78
+            {/* Visual: What Changed & Codified Learning Card */}
+            <div className="rounded-xl border border-emerald-900/50 bg-slate-950/90 p-5 shadow-lg space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <span className="text-sm font-bold text-white">Remediation Verified &amp; Codified</span>
+                </div>
+                <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-xs font-mono font-bold text-emerald-300 border border-emerald-500/40">
+                  SLO Restored
                 </span>
-                <span className="text-2xl sm:text-3xl font-mono font-bold text-slate-500">
-                  / 100
-                </span>
               </div>
-              <div className="inline-block rounded-md bg-rose-950 border border-rose-700/60 px-3 py-1 text-xs font-mono font-bold text-rose-300">
-                ELEVATED BLAST RADIUS
+
+              {/* Before / After Comparison Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="rounded-lg border border-red-900/40 bg-red-950/10 p-3.5 space-y-1.5">
+                  <span className="font-bold text-red-400 uppercase text-[10px] block">Before Remediation</span>
+                  <div className="font-mono text-white text-sm">4,820 ms P99 Latency</div>
+                  <div className="text-slate-400">92.4% Threadpool Saturation • Outage Active</div>
+                </div>
+
+                <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/15 p-3.5 space-y-1.5">
+                  <span className="font-bold text-emerald-400 uppercase text-[10px] block">After Remediation</span>
+                  <div className="font-mono text-emerald-300 text-sm">42 ms P99 Latency</div>
+                  <div className="text-slate-300">0 dropped checkout requests • Normal Operation</div>
+                </div>
               </div>
-              {diagnosisData && (
-                <div className="inline-flex items-center gap-2 rounded-lg bg-sky-950/60 border border-sky-800/60 px-3 py-1.5 text-xs font-mono text-sky-300">
-                  <Database className="h-3.5 w-3.5 text-sky-400" />
-                  <span>Diagnosis Persisted: <strong>{diagnosisData.diagnosisId}</strong></span>
+
+              {/* Codified Hindsight Memory Banner */}
+              <div className="rounded-lg border border-sky-500/30 bg-sky-950/30 p-3.5 flex items-start gap-3">
+                <Sparkles className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <span className="font-bold text-sky-200">
+                    Codified in PostgreSQL Vector Store:
+                  </span>
+                  <p className="mt-0.5 text-slate-300">
+                    Memory {learningData?.memoryId || "MEM-0x892a4e"}: &ldquo;Action [isolate_bulkhead] successfully mitigated Aurora database contention under 14,850 RPS surge without customer downtime.&rdquo;
+                  </p>
+                </div>
+              </div>
+
+              {/* PostgreSQL Real Records Indicator */}
+              {dbStats && (
+                <div className="border-t border-slate-800 pt-3 flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-400">
+                  <span>PostgreSQL Persistence:</span>
+                  <span className="text-slate-300">
+                    {dbStats.incidents} Incidents • {dbStats.diagnoses} Diagnoses • {dbStats.memories} Memories
+                  </span>
                 </div>
               )}
-              <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto pt-2 leading-relaxed">
-                Telemetry and vector correlation indicate a 66.7% deterministic probability of total checkout failure
-                within the next 15 minutes unless proactive guardrail is armed.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 7: PREVENTION */}
-        {currentStep === 7 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-sky-500/30 pb-4">
-              <span className="rounded-md bg-sky-950/80 border border-sky-800/80 px-3 py-1 font-mono text-xs font-bold text-sky-300 flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4 text-sky-400" />
-                STEP 7 — PRESCRIPTIVE AI RECOMMENDATION
-              </span>
-              <span className="font-mono text-xs text-emerald-400 font-bold">Hindsight Grounded</span>
             </div>
 
-            <div className="space-y-3">
-              <span className="text-xs font-mono uppercase text-sky-400 font-bold">AI Recommendation:</span>
-              <blockquote className="text-xl sm:text-3xl font-black text-white italic leading-tight">
-                &ldquo;{strategyData?.strategy?.strategy || "Delay the database migration until traffic decreases and run query performance validation."}&rdquo;
-              </blockquote>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="text-[10px] font-mono uppercase text-slate-400 font-bold">Prescriptive Remedy</span>
-                <p className="text-slate-300">
-                  Pause background settlement worker migration and apply 25% adaptive ingress rate shedding.
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-1">
-                <span className="text-[10px] font-mono uppercase text-emerald-400 font-bold">Expected Impact</span>
-                <p className="text-slate-300">
-                  Risk score drops from 78/100 to 26/100. Saves an estimated $140,000 in averted downtime.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 8: ACTION */}
-        {currentStep === 8 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-emerald-500/40 pb-4">
-              <span className="rounded-md bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 font-mono text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                STEP 8 — OPERATOR ACTION
-              </span>
-              <span className="font-mono text-xs text-sky-400 font-bold">Awaiting Execution</span>
-            </div>
-
-            <div className="text-center py-6 space-y-5">
-              <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Enforce Automated Guardrail?
-              </h2>
-
-              <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed">
-                Policy Action: <span className="font-mono text-emerald-400 font-bold">{selectedAction}</span>. Clicking accept pauses in-flight migration pipeline #4492, triggers adaptive token-bucket shedding,
-                and isolates customer checkout queries.
-              </p>
-
-              <div className="pt-2">
-                <button
-                  onClick={handleAcceptRecommendation}
-                  className="rounded-2xl bg-emerald-600 hover:bg-emerald-500 px-8 py-4 text-sm sm:text-base font-black text-white shadow-2xl shadow-emerald-950/80 transition-all transform hover:scale-105 inline-flex items-center gap-2.5 animate-pulse"
-                >
-                  <CheckCircle2 className="h-5 w-5" />
-                  Accept Recommendation &amp; Enforce Guardrail
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 9: OUTCOME */}
-        {currentStep === 9 && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-emerald-500/40 pb-4">
-              <span className="rounded-md bg-emerald-950/80 border border-emerald-800/80 px-3 py-1 font-mono text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                STEP 9 — RECOVERY OUTCOME RECORDED
-              </span>
-              <span className="font-mono text-xs text-emerald-400 font-bold">FAILURE PREVENTED</span>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight text-emerald-300">
-                Incident Prevented &amp; Recovered in 2m 14s.
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                Automated guardrail executed ({executionData?.id || actionExecutionIdRef.current || "exec-safety-ok"}). Verification status: <span className="font-mono font-bold text-emerald-300">{verificationData?.verificationStatus || "verified_resolved"}</span>. Persisted to PostgreSQL.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-              <div className="rounded-2xl border border-emerald-900/50 bg-emerald-950/20 p-4 text-center">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Mean Time to Recover</span>
-                <div className="text-2xl font-mono font-bold text-emerald-400 mt-1">2m 14s</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">vs. 34m historical MTTR</div>
-              </div>
-              <div className="rounded-2xl border border-emerald-900/50 bg-emerald-950/20 p-4 text-center">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Post-Mitigation Risk</span>
-                <div className="text-2xl font-mono font-bold text-emerald-400 mt-1">26 / 100</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">Normalized from 78/100</div>
-              </div>
-              <div className="rounded-2xl border border-emerald-900/50 bg-emerald-950/20 p-4 text-center">
-                <span className="text-[10px] font-mono uppercase text-slate-400">Averted Revenue Loss</span>
-                <div className="text-2xl font-mono font-bold text-white mt-1">$140,000</div>
-                <div className="text-[11px] text-emerald-400 mt-0.5">Preserved in SLA budget</div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 10: LEARNING (FINAL CELEBRATION SCREEN) */}
-        {currentStep === 10 && (
-          <div className="space-y-8 text-center py-4 animate-in fade-in duration-500">
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 border border-emerald-500/40 px-4 py-1 text-xs font-mono font-bold text-emerald-400 shadow-lg shadow-emerald-950/40">
-              <Sparkles className="h-4 w-4 text-emerald-400 animate-spin" />
-              <span>THE COGNITIVE LOOP IS COMPLETE</span>
-            </div>
-
-            {/* The Great Final Statement */}
-            <div className="space-y-3">
-              <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight uppercase">
-                RESONYX JUST LEARNED SOMETHING NEW.
-              </h1>
-              <p className="text-sm sm:text-base text-sky-200 max-w-2xl mx-auto">
-                Every failure and successful resolution is permanently codified into long-term organizational memory.
-              </p>
-            </div>
-
-            {/* Three Institutional Pillars */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
-              <div className="rounded-2xl border border-sky-500/40 bg-slate-950 p-4 space-y-1">
-                <div className="text-[10px] font-mono uppercase text-sky-400 font-bold flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Pillar 01
-                </div>
-                <h3 className="text-sm font-bold text-white">New Memory Created</h3>
-                <p className="text-xs text-slate-400">
-                  Node <code className="text-sky-300">MEM-8505</code> vectorized with lock contention resolution telemetry.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-amber-500/40 bg-slate-950 p-4 space-y-1">
-                <div className="text-[10px] font-mono uppercase text-amber-400 font-bold flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Pillar 02
-                </div>
-                <h3 className="text-sm font-bold text-white">Pattern Updated</h3>
-                <p className="text-xs text-slate-400">
-                  <code className="text-amber-300">PAT-017</code> recorded its 13th successful resolution in production.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-emerald-500/40 bg-slate-950 p-4 space-y-1">
-                <div className="text-[10px] font-mono uppercase text-emerald-400 font-bold flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Pillar 03
-                </div>
-                <h3 className="text-sm font-bold text-white">Future Detection Improved</h3>
-                <p className="text-xs text-slate-400">
-                  Pre-warning lead time improved to 38 minutes for future schema releases.
-                </p>
-              </div>
-            </div>
-
-            {/* Updated Real-Time Counters */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 max-w-2xl mx-auto grid grid-cols-4 gap-2 text-center text-xs font-mono">
-              <div>
-                <span className="text-[10px] text-slate-500 uppercase">Memory Count</span>
-                <div className="text-lg font-bold text-sky-400 mt-0.5">{memoryCount}</div>
-                <span className="text-[9px] text-emerald-400">+1 Vector</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-500 uppercase">Pattern Conf.</span>
-                <div className="text-lg font-bold text-amber-400 mt-0.5">{patternConfidence}%</div>
-                <span className="text-[9px] text-emerald-400">+0.8%</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-500 uppercase">Prevented</span>
-                <div className="text-lg font-bold text-emerald-400 mt-0.5">{preventionCount}</div>
-                <span className="text-[9px] text-emerald-400">+1 Outage</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-500 uppercase">Timeline</span>
-                <div className="text-lg font-bold text-white mt-0.5">Day 61</div>
-                <span className="text-[9px] text-emerald-400">Milestone Logged</span>
-              </div>
-            </div>
-
-            {/* Codified Learning Result */}
-            {learningData && (
-              <div className="text-xs font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 rounded-xl p-2.5 max-w-xl mx-auto flex items-center justify-between">
-                <span>Codified Memory ID: <strong className="text-white">{learningData.memoryId}</strong></span>
-                <span className="text-emerald-300 font-bold">Confidence: {learningData.newConfidence}%</span>
-              </div>
-            )}
-
-            {/* Real-time PostgreSQL Persistence Audit */}
-            {dbStats && (
-              <div className="mt-3 p-3.5 rounded-2xl bg-slate-950 border border-emerald-500/40 max-w-2xl mx-auto text-left shadow-xl shadow-emerald-950/20">
-                <div className="flex items-center justify-between border-b border-emerald-900/40 pb-2 mb-2">
-                  <span className="font-mono text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                    <Database className="h-3.5 w-3.5 text-emerald-400" />
-                    Verified PostgreSQL Persistence Layer
-                  </span>
-                  <span className="font-mono text-[10px] text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700/60">
-                    Live Production Records
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center font-mono">
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Incidents</div>
-                    <div className="text-sm font-bold text-white mt-0.5">{dbStats.incidents}</div>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Diagnoses</div>
-                    <div className="text-sm font-bold text-sky-400 mt-0.5">{dbStats.diagnoses}</div>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Executions</div>
-                    <div className="text-sm font-bold text-amber-400 mt-0.5">{dbStats.actionExecutions}</div>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Verifications</div>
-                    <div className="text-sm font-bold text-emerald-400 mt-0.5">{dbStats.verifications}</div>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Memories</div>
-                    <div className="text-sm font-bold text-purple-400 mt-0.5">{dbStats.memories}</div>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <div className="text-[9px] text-slate-400 uppercase">Audit Logs</div>
-                    <div className="text-sm font-bold text-rose-400 mt-0.5">{dbStats.auditLogs}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Actions for Judges */}
+            {/* Run Again & Navigation Buttons on Step 5 */}
             <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
               <button
                 onClick={handleRestart}
-                className="rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-xs font-bold text-white transition-colors flex items-center gap-1.5"
+                className="flex items-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-950/50 transition-colors"
               >
-                <RotateCcw className="h-3.5 w-3.5" /> Replay Demo
+                <RotateCcw className="h-4 w-4" />
+                <span>Run again</span>
               </button>
 
               <Link
-                href="/difference"
-                className="rounded-xl border border-sky-500/40 bg-sky-950/60 hover:bg-sky-900/60 px-4 py-2 text-xs font-bold text-sky-300 transition-colors flex items-center gap-1.5"
+                href="/memory"
+                className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-200 transition-colors"
               >
-                <Sparkles className="h-3.5 w-3.5 text-sky-400" />
-                The Hindsight Difference
+                <Database className="h-4 w-4 text-sky-400" />
+                <span>View Hindsight Memory</span>
+                <ArrowRight className="h-4 w-4" />
               </Link>
 
               <Link
-                href="/hindsight"
-                className="rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/50 transition-colors flex items-center gap-1.5"
+                href="/incidents"
+                className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-200 transition-colors"
               >
-                <Database className="h-3.5 w-3.5" />
-                Explore Memory Vectors <ChevronRight className="h-3.5 w-3.5" />
+                <AlertOctagon className="h-4 w-4 text-red-400" />
+                <span>View Incidents</span>
+                <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
           </div>
         )}
 
         {/* Footer Navigation Bar within Stage */}
-        <div className="mt-8 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+        <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
           <span className="font-mono">
-            Step {currentStep} of 10: <strong className="text-white">{DEMO_STEPS[currentStep - 1]?.name}</strong>
+            Step {currentStep} of 5: <strong className="text-white">{STEP_TITLES[currentStep - 1]}</strong>
           </span>
 
-          <div className="flex items-center gap-3">
-            {currentStep > 1 && (
-              <button
-                onClick={handlePrev}
-                className="text-slate-400 hover:text-white transition-colors inline-flex items-center gap-1"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" /> Back
-              </button>
-            )}
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleBack}
+              disabled={currentStep === 1 || isProcessing}
+              className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              <span>Back</span>
+            </button>
 
-            {currentStep < 10 && (
+            {currentStep < 5 && (
               <button
                 onClick={handleNext}
-                className="rounded-lg bg-sky-600 hover:bg-sky-500 px-3.5 py-1.5 font-bold text-white transition-colors inline-flex items-center gap-1"
+                disabled={isProcessing}
+                className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 font-bold text-white transition-colors disabled:opacity-50 flex items-center gap-1 shadow"
               >
-                Next <ChevronRight className="h-3.5 w-3.5" />
+                <span>Next</span>
+                <ChevronRight className="h-3.5 w-3.5" />
               </button>
             )}
           </div>

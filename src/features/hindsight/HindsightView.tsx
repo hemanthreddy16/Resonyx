@@ -701,11 +701,11 @@ export function HindsightView() {
             {/* Modal Actions Footer */}
             <div className="border-t border-slate-800 bg-slate-900/60 px-6 py-3 flex items-center justify-between">
               <Link
-                href="/ai-command"
+                href="/demo"
                 className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-semibold"
               >
                 <Terminal className="h-4 w-4" />
-                <span>Simulate in AI Reasoning Console</span>
+                <span>Simulate in Interactive Demo</span>
               </Link>
 
               <button

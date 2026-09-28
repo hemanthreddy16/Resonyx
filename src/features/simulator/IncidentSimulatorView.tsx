@@ -667,10 +667,10 @@ export function IncidentSimulatorView() {
 
                     <div className="pt-2 flex items-center justify-between">
                       <Link
-                        href="/timeline"
+                        href="/memory"
                         className="text-xs text-sky-400 hover:text-sky-300 font-medium inline-flex items-center gap-1"
                       >
-                        View in Learning Timeline <ChevronRight className="h-3.5 w-3.5" />
+                        View in Hindsight Memory <ChevronRight className="h-3.5 w-3.5" />
                       </Link>
 
                       <button
