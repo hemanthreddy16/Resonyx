@@ -266,3 +266,6 @@ export interface AiCommandMessage {
   confidenceScore?: number;
   deductionTrace?: string[];
 }
+
+export * from "./ai";
+
