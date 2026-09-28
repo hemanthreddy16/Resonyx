@@ -103,6 +103,10 @@ export async function getDatabaseHealth(): Promise<{
   tableCount: number;
   incidentCount: number;
   memoryCount: number;
+  diagnosisCount: number;
+  actionExecutionCount: number;
+  verificationCount: number;
+  auditLogCount: number;
   error?: string;
 }> {
   const p = getDbPool();
@@ -113,6 +117,10 @@ export async function getDatabaseHealth(): Promise<{
       tableCount: 0,
       incidentCount: memoryStore.incidents.size,
       memoryCount: memoryStore.hindsightMemories.size,
+      diagnosisCount: memoryStore.diagnoses.size,
+      actionExecutionCount: memoryStore.actionExecutions.size,
+      verificationCount: memoryStore.verifications.size,
+      auditLogCount: memoryStore.auditLogs.length,
       error: "DATABASE_URL environment variable is not configured.",
     };
   }
@@ -129,6 +137,10 @@ export async function getDatabaseHealth(): Promise<{
 
     const incRes = await client.query("SELECT COUNT(*) as count FROM incidents;").catch(() => ({ rows: [{ count: "0" }] }));
     const memRes = await client.query("SELECT COUNT(*) as count FROM hindsight_memories;").catch(() => ({ rows: [{ count: "0" }] }));
+    const diagRes = await client.query("SELECT COUNT(*) as count FROM diagnoses;").catch(() => ({ rows: [{ count: "0" }] }));
+    const execRes = await client.query("SELECT COUNT(*) as count FROM action_executions;").catch(() => ({ rows: [{ count: "0" }] }));
+    const verRes = await client.query("SELECT COUNT(*) as count FROM verifications;").catch(() => ({ rows: [{ count: "0" }] }));
+    const auditRes = await client.query("SELECT COUNT(*) as count FROM audit_logs;").catch(() => ({ rows: [{ count: "0" }] }));
 
     return {
       connected: true,
@@ -136,6 +148,10 @@ export async function getDatabaseHealth(): Promise<{
       tableCount,
       incidentCount: parseInt(incRes.rows[0]?.count || "0", 10),
       memoryCount: parseInt(memRes.rows[0]?.count || "0", 10),
+      diagnosisCount: parseInt(diagRes.rows[0]?.count || "0", 10),
+      actionExecutionCount: parseInt(execRes.rows[0]?.count || "0", 10),
+      verificationCount: parseInt(verRes.rows[0]?.count || "0", 10),
+      auditLogCount: parseInt(auditRes.rows[0]?.count || "0", 10),
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -145,6 +161,10 @@ export async function getDatabaseHealth(): Promise<{
       tableCount: 0,
       incidentCount: memoryStore.incidents.size,
       memoryCount: memoryStore.hindsightMemories.size,
+      diagnosisCount: memoryStore.diagnoses.size,
+      actionExecutionCount: memoryStore.actionExecutions.size,
+      verificationCount: memoryStore.verifications.size,
+      auditLogCount: memoryStore.auditLogs.length,
       error: msg,
     };
   } finally {

@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
 
     // Persist diagnosis in PostgreSQL
     const diagnosisId = await insertDiagnosis(incident.id, diagnosis);
+    console.log(`[Resonyx] diagnosis persisted: ${diagnosisId} for incident ${incident.code} (root cause: ${diagnosis.rootCause})`);
 
     await insertAuditLog({
       id: `aud-${Date.now()}-diag`,

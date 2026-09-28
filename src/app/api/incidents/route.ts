@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
     };
 
     const saved = await insertIncident(newIncident);
+    console.log(`[Resonyx] incident created: ${saved.code} (${saved.id}) - ${saved.title}`);
 
     return NextResponse.json({
       success: true,

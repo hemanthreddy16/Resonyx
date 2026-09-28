@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Update incident status in PostgreSQL
     await updateIncidentStatus(incident.id, "learning-indexed");
+    console.log(`[Resonyx] learning persisted: incident=${incident.id}, memoryId=${memoryResponse.memoryId}, vectorId=${memoryResponse.vectorId}`);
 
     await insertAuditLog({
       id: `aud-${Date.now()}-learn`,

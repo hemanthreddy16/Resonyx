@@ -45,6 +45,10 @@ export async function GET() {
         records: {
           incidents: dbHealth.incidentCount,
           memories: dbHealth.memoryCount,
+          diagnoses: dbHealth.diagnosisCount,
+          actionExecutions: dbHealth.actionExecutionCount,
+          verifications: dbHealth.verificationCount,
+          auditLogs: dbHealth.auditLogCount,
         },
         error: dbHealth.error ? dbHealth.error.substring(0, 100) : undefined,
       },

@@ -50,15 +50,66 @@ export function IncidentSimulatorView() {
     memoryCount: 8492,
   });
 
+  const simIncidentIdRef = React.useRef<string | null>(null);
+
+  // Fetch real stats on mount
+  React.useEffect(() => {
+    fetch("/api/health")
+      .then((r) => r.json())
+      .then((h) => {
+        if (h?.services?.database?.records) {
+          const rec = h.services.database.records;
+          setKpiState((prev) => ({
+            ...prev,
+            memoryCount: rec.memories || prev.memoryCount,
+            preventedFailures: rec.verifications || prev.preventedFailures,
+          }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const scenario: SimulationScenarioConfig = SIMULATION_SCENARIOS[selectedKey] || SIMULATION_SCENARIOS.payment;
 
-  // Run the phased simulation sequence with realistic timers
+  // Run the phased simulation sequence with realistic timers and real backend persistence
   const runSimulation = (key: string) => {
     setSelectedKey(key);
     setStage("analyzing");
     setCurrentStepIndex(0);
     setProgressPercent(15);
     setKpiState((prev) => ({ ...prev, activeIncidents: 1 }));
+
+    const scen = SIMULATION_SCENARIOS[key] || SIMULATION_SCENARIOS.payment;
+
+    // Ingest incident into PostgreSQL in background
+    fetch("/api/incidents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: scen.incidentTitle,
+        service: scen.service,
+        environment: "Production",
+        severity: scen.severity.toLowerCase(),
+        summary: scen.initialTelemetry.description,
+        rootCauseDomain: scen.patternName,
+        evidence: {
+          metrics: scen.initialTelemetry.spikeValue,
+        },
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.data?.id) {
+          simIncidentIdRef.current = d.data.id;
+          // Trigger diagnosis
+          fetch("/api/agents/diagnose", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ incidentId: d.data.id }),
+          }).catch(() => {});
+        }
+      })
+      .catch((e) => console.error("[Simulator] Incident creation failed:", e));
 
     // Step 1 -> Step 2
     setTimeout(() => {
@@ -96,9 +147,62 @@ export function IncidentSimulatorView() {
   };
 
   // When user clicks "Accept Recommendation"
-  const handleAccept = () => {
+  const handleAccept = async () => {
     setStage("accepted");
-    // Update KPIs
+    const incId = simIncidentIdRef.current;
+
+    if (incId) {
+      try {
+        // Execute recovery
+        const recRes = await fetch("/api/agents/recover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ incidentId: incId, action: "isolate_bulkhead" }),
+        });
+        const recData = await recRes.json();
+        const execId = recData?.data?.execution?.id;
+
+        // Verify
+        await fetch("/api/agents/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ incidentId: incId, actionExecutionId: execId }),
+        });
+
+        // Learn
+        await fetch("/api/agents/learn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            incidentId: incId,
+            recoveryAction: "isolate_bulkhead",
+            actionSucceeded: true,
+            importantLessons: [
+              `Mitigated ${scenario.incidentTitle} using isolated bulkhead guardrail under high load.`,
+            ],
+          }),
+        });
+
+        // Refresh counts
+        const healthRes = await fetch("/api/health");
+        const health = await healthRes.json();
+        if (health?.services?.database?.records) {
+          const rec = health.services.database.records;
+          setKpiState((prev) => ({
+            ...prev,
+            activeIncidents: 0,
+            preventedFailures: rec.verifications || prev.preventedFailures + 1,
+            savedCapitalM: parseFloat((prev.savedCapitalM + 0.14).toFixed(2)),
+            memoryCount: rec.memories || prev.memoryCount + 1,
+          }));
+          return;
+        }
+      } catch (e) {
+        console.error("[Simulator] Accept pipeline error:", e);
+      }
+    }
+
+    // Fallback UI update
     setKpiState((prev) => ({
       activeIncidents: 0,
       preventedFailures: prev.preventedFailures + 1,

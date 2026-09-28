@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
 
     // Persist verification in PostgreSQL
     await insertVerification(verification);
+    console.log(`[Resonyx] verification persisted: incident=${incident.id}, verification=${verification.id}, status=${verification.verificationStatus}`);
 
     const isResolved = verification.verificationStatus === "verified_resolved";
     if (isResolved) {

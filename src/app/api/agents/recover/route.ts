@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
 
     // Record execution in PostgreSQL
     await insertActionExecution(execution);
+    console.log(`[Resonyx] recovery execution persisted: incident=${incident.id}, execution=${execution.id}, action=${action}, status=${execution.status}`);
 
     return NextResponse.json({
       success: execution.status === "success",
